@@ -139,6 +139,42 @@ describe("wsNativeApi", () => {
     );
   });
 
+  it("sends app.health requests to runtime", async () => {
+    setWindowSearch("?ws=ws%3A%2F%2F127.0.0.1%3A4411");
+    const { getOrCreateWsNativeApi } = await import("./wsNativeApi");
+    const api = getOrCreateWsNativeApi();
+
+    const request = api.app.health();
+    const socket = MockWebSocket.instances[0];
+    await waitForCondition(() => (socket?.sentMessages.length ?? 0) > 0);
+    const requestEnvelope = JSON.parse(socket?.sentMessages[0] ?? "{}") as {
+      id: string;
+      method: string;
+    };
+    expect(requestEnvelope.method).toBe("app.health");
+
+    socket?.emitMessage(
+      JSON.stringify({
+        type: "response",
+        id: requestEnvelope.id,
+        ok: true,
+        result: {
+          status: "ok",
+          launchCwd: "/workspace",
+          sessionCount: 0,
+          activeClientConnected: true,
+        },
+      }),
+    );
+
+    await expect(request).resolves.toEqual({
+      status: "ok",
+      launchCwd: "/workspace",
+      sessionCount: 0,
+      activeClientConnected: true,
+    });
+  });
+
   it("falls back to default local runtime URL when ws query is missing", async () => {
     setWindowSearch("");
     const { getOrCreateWsNativeApi } = await import("./wsNativeApi");
