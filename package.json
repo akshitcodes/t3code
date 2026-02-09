@@ -15,7 +15,6 @@
     "lint": "oxlint --report-unused-disable-directives",
     "test": "turbo run test",
     "fmt": "oxfmt",
-    "smoke-test": "turbo run smoke-test",
     "build:contracts": "bun run --cwd packages/contracts build"
   },
   "devDependencies": {

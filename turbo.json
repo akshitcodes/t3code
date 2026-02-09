@@ -1,10 +1,10 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalEnv": ["ELECTRON_RENDERER_PORT", "VITE_WS_URL", "VITE_DEV_SERVER_URL", "WS_SERVER_PORT"],
+  "globalEnv": ["PORT", "VITE_WS_URL", "VITE_DEV_SERVER_URL"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "dist-electron/**"]
+      "outputs": ["dist/**"]
     },
     "dev": {
       "cache": false,
@@ -16,11 +16,6 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "outputs": []
-    },
-    "smoke-test": {
-      "dependsOn": ["build"],
-      "cache": false,
       "outputs": []
     }
   }
