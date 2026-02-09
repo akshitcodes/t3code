@@ -58,6 +58,7 @@ function makeState(thread: Thread): AppState {
     activeThreadId: thread.id,
     runtimeMode: "full-access",
     diffOpen: false,
+    runtimeError: null,
   };
 }
 
@@ -69,6 +70,7 @@ describe("store reducer thread continuity", () => {
       activeThreadId: null,
       runtimeMode: "full-access",
       diffOpen: false,
+      runtimeError: null,
     };
     const session = makeSession({
       sessionId: "sess-bootstrap",
@@ -100,6 +102,7 @@ describe("store reducer thread continuity", () => {
       activeThreadId: null,
       runtimeMode: "full-access",
       diffOpen: false,
+      runtimeError: null,
     };
 
     const next = reducer(state, {
@@ -118,6 +121,17 @@ describe("store reducer thread continuity", () => {
     });
 
     expect(next.threads[0]?.error).toBe("Timed out waiting for initialize.");
+  });
+
+  it("stores runtime connection errors separately from thread errors", () => {
+    const state = makeState(makeThread());
+    const next = reducer(state, {
+      type: "SET_RUNTIME_ERROR",
+      error: "Connection refused",
+    });
+
+    expect(next.runtimeError).toBe("Connection refused");
+    expect(next.threads[0]?.error).toBeNull();
   });
 
   it("stores codexThreadId from UPDATE_SESSION", () => {

@@ -41,8 +41,15 @@ function BootstrapRouter() {
           bootstrap,
         });
       })
-      .catch(() => {
-        // Keep existing renderer state if bootstrap is unavailable.
+      .catch((error) => {
+        if (cancelled) return;
+        dispatch({
+          type: "SET_RUNTIME_ERROR",
+          error:
+            error instanceof Error
+              ? error.message
+              : "Could not connect to the local t3 runtime.",
+        });
       });
 
     return () => {
@@ -72,6 +79,11 @@ function Layout() {
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <BootstrapRouter />
       <EventRouter />
+      {state.runtimeError && state.projects.length === 0 && (
+        <div className="pointer-events-none fixed right-4 top-4 z-50 max-w-[440px] rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+          Runtime connection failed: {state.runtimeError}
+        </div>
+      )}
       <Sidebar />
       <ChatView />
       {state.diffOpen && <DiffPanel />}

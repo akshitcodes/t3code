@@ -33,6 +33,7 @@ type Action =
   | { type: "SET_THREAD_TITLE"; threadId: string; title: string }
   | { type: "SET_THREAD_MODEL"; threadId: string; model: string }
   | { type: "SET_RUNTIME_MODE"; mode: RuntimeMode }
+  | { type: "SET_RUNTIME_ERROR"; error: string | null }
   | { type: "BOOTSTRAP_FROM_SERVER"; bootstrap: AppBootstrapResult };
 
 // ── State ────────────────────────────────────────────────────────────
@@ -43,6 +44,7 @@ export interface AppState {
   activeThreadId: string | null;
   runtimeMode: RuntimeMode;
   diffOpen: boolean;
+  runtimeError: string | null;
 }
 
 const PERSISTED_STATE_KEY = "codething:renderer-state:v4";
@@ -58,6 +60,7 @@ const initialState: AppState = {
   activeThreadId: null,
   runtimeMode: DEFAULT_RUNTIME_MODE,
   diffOpen: false,
+  runtimeError: null,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -79,7 +82,7 @@ function readPersistedState(): AppState {
     );
     if (!hydrated) return initialState;
 
-    return { ...hydrated, diffOpen: false };
+    return { ...hydrated, diffOpen: false, runtimeError: null };
   } catch {
     return initialState;
   }
@@ -305,6 +308,12 @@ export function reducer(state: AppState, action: Action): AppState {
         runtimeMode: action.mode,
       };
 
+    case "SET_RUNTIME_ERROR":
+      return {
+        ...state,
+        runtimeError: action.error,
+      };
+
     case "BOOTSTRAP_FROM_SERVER": {
       const { bootstrap } = action;
       const existingProject = state.projects.find((project) => project.cwd === bootstrap.launchCwd);
@@ -370,6 +379,7 @@ export function reducer(state: AppState, action: Action): AppState {
           )
           .concat(existingThread ? [] : [thread]),
         activeThreadId,
+        runtimeError: null,
       };
     }
 
