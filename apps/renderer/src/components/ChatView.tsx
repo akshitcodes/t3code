@@ -8,7 +8,6 @@ import {
   Fragment,
   type KeyboardEvent,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -154,15 +153,9 @@ export default function ChatView() {
   const isWorking = phase === "running" || isSending || isConnecting;
   const nowIso = new Date(nowTick).toISOString();
   const modelOptions = MODEL_OPTIONS;
-  const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(activeThread?.events ?? [], undefined),
-    [activeThread?.events],
-  );
-  const pendingApprovals = useMemo(
-    () => derivePendingApprovals(activeThread?.events ?? []),
-    [activeThread?.events],
-  );
-  const assistantCompletionByItemId = useMemo(() => {
+  const workLogEntries = deriveWorkLogEntries(activeThread?.events ?? [], undefined);
+  const pendingApprovals = derivePendingApprovals(activeThread?.events ?? []);
+  const assistantCompletionByItemId = (() => {
     const map = new Map<string, string>();
     const ordered = [...(activeThread?.events ?? [])].toReversed();
     for (const event of ordered) {
@@ -171,12 +164,9 @@ export default function ChatView() {
       map.set(event.itemId, event.createdAt);
     }
     return map;
-  }, [activeThread?.events]);
-  const timelineEntries = useMemo(
-    () => deriveTimelineEntries(activeThread?.messages ?? [], workLogEntries),
-    [activeThread?.messages, workLogEntries],
-  );
-  const completionSummary = useMemo(() => {
+  })();
+  const timelineEntries = deriveTimelineEntries(activeThread?.messages ?? [], workLogEntries);
+  const completionSummary = (() => {
     if (!activeThread?.latestTurnStartedAt) return null;
     if (!activeThread.latestTurnCompletedAt) return null;
     if (workLogEntries.length === 0) return null;
@@ -194,13 +184,8 @@ export default function ChatView() {
       activeThread.latestTurnCompletedAt,
     );
     return elapsed ? `Worked for ${elapsed}` : null;
-  }, [
-    activeThread?.latestTurnStartedAt,
-    activeThread?.latestTurnCompletedAt,
-    activeThread?.latestTurnDurationMs,
-    workLogEntries.length,
-  ]);
-  const completionDividerBeforeEntryId = useMemo(() => {
+  })();
+  const completionDividerBeforeEntryId = (() => {
     if (!activeThread?.latestTurnStartedAt) return null;
     if (!activeThread.latestTurnCompletedAt) return null;
     if (workLogEntries.length === 0) return null;
@@ -215,12 +200,7 @@ export default function ChatView() {
       return !Number.isNaN(messageAt) && messageAt >= turnStartedAt;
     });
     return entry?.id ?? null;
-  }, [
-    activeThread?.latestTurnStartedAt,
-    activeThread?.latestTurnCompletedAt,
-    timelineEntries,
-    workLogEntries.length,
-  ]);
+  })();
   const runtimeSessionConfig =
     state.runtimeMode === "full-access"
       ? ({
