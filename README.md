@@ -71,7 +71,7 @@ Runtime command semantics:
 - Runtime validates request payloads with shared Zod contracts.
 - Codex execution sandbox policy (`read-only`, `workspace-write`, `danger-full-access`) is still selected per session startup options.
 - Static HTML responses are served with `Cache-Control: no-store`; built `/assets/*` files are served with long-lived immutable cache headers.
-- Static file success responses include `Accept-Ranges: bytes` plus hardened browser headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Resource-Policy`, `Cross-Origin-Opener-Policy`).
+- Static file success responses include `Accept-Ranges: bytes`, `Vary: Range`, plus hardened browser headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Resource-Policy`, `Cross-Origin-Opener-Policy`).
 - Static files support single-range byte requests (`Range: bytes=...`) with standards-compliant `206` / `416` behavior.
 
 ## Runtime modes
