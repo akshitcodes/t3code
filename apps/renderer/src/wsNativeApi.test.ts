@@ -523,6 +523,39 @@ describe("wsNativeApi", () => {
     await expect(request).rejects.toThrow("websocket disconnected (replaced-by-new-client)");
   });
 
+  it("reconnects after pending request is rejected by unauthorized disconnect", async () => {
+    setWindowSearch("?ws=ws%3A%2F%2F127.0.0.1%3A4467");
+    const { getOrCreateWsNativeApi } = await import("./wsNativeApi");
+    const api = getOrCreateWsNativeApi();
+
+    const rejectedRequest = api.todos.list();
+    const firstSocket = MockWebSocket.instances[0];
+    await waitForCondition(() => (firstSocket?.sentMessages.length ?? 0) > 0);
+    firstSocket?.closeWith({
+      code: WS_CLOSE_CODES.unauthorized,
+      reason: WS_CLOSE_REASONS.unauthorized,
+    });
+    await expect(rejectedRequest).rejects.toThrow("websocket disconnected (unauthorized)");
+
+    const secondRequest = api.todos.list();
+    await waitForCondition(() => MockWebSocket.instances.length >= 2);
+    const secondSocket = MockWebSocket.instances[1];
+    await waitForCondition(() => (secondSocket?.sentMessages.length ?? 0) > 0);
+    const secondEnvelope = JSON.parse(secondSocket?.sentMessages[0] ?? "{}") as {
+      id: string;
+    };
+    secondSocket?.emitMessage(
+      JSON.stringify({
+        type: "response",
+        id: secondEnvelope.id,
+        ok: true,
+        result: [],
+      }),
+    );
+
+    await expect(secondRequest).resolves.toEqual([]);
+  });
+
   it("falls back to generic disconnect message when close code is missing", async () => {
     setWindowSearch("?ws=ws%3A%2F%2F127.0.0.1%3A4455");
     const { getOrCreateWsNativeApi } = await import("./wsNativeApi");
