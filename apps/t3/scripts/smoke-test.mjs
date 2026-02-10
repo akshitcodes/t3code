@@ -352,6 +352,21 @@ async function main() {
         `Smoke test failed: expected If-Match mismatch status 412, received ${ifMatchMismatchAsset.status}.`,
       );
     }
+    if ((ifMatchMismatchAsset.headers.get("content-type") ?? "").toLowerCase() !== "text/plain; charset=utf-8") {
+      throw new Error(
+        `Smoke test failed: expected plain-text content-type on If-Match mismatch response, got ${String(
+          ifMatchMismatchAsset.headers.get("content-type"),
+        )}.`,
+      );
+    }
+    const ifMatchMismatchContentLength = Number(ifMatchMismatchAsset.headers.get("content-length") ?? "0");
+    if (!Number.isFinite(ifMatchMismatchContentLength) || ifMatchMismatchContentLength <= 0) {
+      throw new Error(
+        `Smoke test failed: expected positive content-length on If-Match mismatch response, got ${String(
+          ifMatchMismatchAsset.headers.get("content-length"),
+        )}.`,
+      );
+    }
     if ((ifMatchMismatchAsset.headers.get("cache-control") ?? "").toLowerCase() !== "no-store") {
       throw new Error("Smoke test failed: expected cache-control=no-store on If-Match mismatch response.");
     }
@@ -511,6 +526,26 @@ async function main() {
     if (ifMatchMismatchHeadAsset.status !== 412) {
       throw new Error(
         `Smoke test failed: expected HEAD If-Match mismatch status 412, received ${ifMatchMismatchHeadAsset.status}.`,
+      );
+    }
+    if (
+      (ifMatchMismatchHeadAsset.headers.get("content-type") ?? "").toLowerCase() !==
+      "text/plain; charset=utf-8"
+    ) {
+      throw new Error(
+        `Smoke test failed: expected plain-text content-type on HEAD If-Match mismatch response, got ${String(
+          ifMatchMismatchHeadAsset.headers.get("content-type"),
+        )}.`,
+      );
+    }
+    const ifMatchMismatchHeadContentLength = Number(
+      ifMatchMismatchHeadAsset.headers.get("content-length") ?? "0",
+    );
+    if (!Number.isFinite(ifMatchMismatchHeadContentLength) || ifMatchMismatchHeadContentLength <= 0) {
+      throw new Error(
+        `Smoke test failed: expected positive content-length on HEAD If-Match mismatch response, got ${String(
+          ifMatchMismatchHeadAsset.headers.get("content-length"),
+        )}.`,
       );
     }
     if ((ifMatchMismatchHeadAsset.headers.get("cache-control") ?? "").toLowerCase() !== "no-store") {
