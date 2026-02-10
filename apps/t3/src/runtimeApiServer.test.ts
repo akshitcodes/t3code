@@ -397,6 +397,23 @@ describe("runtimeApiServer", () => {
     client.socket.close();
   });
 
+  it("trims non-space surrounding whitespace from auth tokens", async () => {
+    const server = await startRuntimeApiServer({
+      port: 0,
+      launchCwd: process.cwd(),
+      authToken: "\n\tsecret-token\t\n",
+    });
+    servers.push(server);
+
+    const wsUrl = new URL(server.wsUrl);
+    expect(wsUrl.searchParams.get("token")).toBe("secret-token");
+
+    const client = await connectClient(server.wsUrl);
+    const hello = await client.nextMessage();
+    expect(hello.type).toBe("hello");
+    client.socket.close();
+  });
+
   it("encodes auth token query parameter in runtime websocket URL", async () => {
     const server = await startRuntimeApiServer({
       port: 0,
