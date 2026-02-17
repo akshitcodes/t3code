@@ -955,12 +955,37 @@ export async function runDesktopPerfAutomation(window: BrowserWindow): Promise<v
     await contentTracing.startRecording(traceConfig);
     isTraceRecording = true;
     console.log("[desktop-perf] running scripted interactions");
-    const rendererInteractions = await runRendererPerfInteractions(
-      window,
-      seed.benchmarkThreads.map((thread) => thread.id),
-    );
+    let rendererInteractions: RendererPerfInteractions = {
+      threadClicks: 0,
+      typedChars: 0,
+      selectedModel: null,
+      largeThreadRenderStats: [],
+      benchmarkThreadIds: [],
+    };
+    try {
+      rendererInteractions = await runRendererPerfInteractions(
+        window,
+        seed.benchmarkThreads.map((thread) => thread.id),
+      );
+    } catch (rendererError) {
+      const message = rendererError instanceof Error ? rendererError.message : String(rendererError);
+      console.warn("[desktop-perf] renderer scripted interactions failed; continuing:", message);
+    }
     console.log("[desktop-perf] running terminal shortcut interactions");
-    const terminalInteractions = await runTerminalPerfInteractions(window);
+    let terminalInteractions: TerminalPerfInteractions = {
+      openedByShortcut: false,
+      splitCount: 0,
+      commandMarker: "",
+      commandEchoObserved: false,
+      commandFileTouched: false,
+      modifierUsed: process.platform === "darwin" ? "meta" : "control",
+    };
+    try {
+      terminalInteractions = await runTerminalPerfInteractions(window);
+    } catch (terminalError) {
+      const message = terminalError instanceof Error ? terminalError.message : String(terminalError);
+      console.warn("[desktop-perf] terminal scripted interactions failed; continuing:", message);
+    }
     const interactions = {
       ...rendererInteractions,
       terminal: terminalInteractions,
