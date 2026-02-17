@@ -1129,7 +1129,7 @@ export default function ChatView() {
         setComposerMenuIndex((existing) => Math.max(existing - 1, 0));
         return;
       }
-      if (e.key === "Tab" || e.key === "Enter") {
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
         const selectedItem = activeComposerMenuItem ?? composerMenuItems[0];
         if (selectedItem) {
           e.preventDefault();
