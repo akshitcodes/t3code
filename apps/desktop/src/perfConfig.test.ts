@@ -5,11 +5,16 @@ import { shouldRunTerminalPerfInteractions } from "./perfConfig";
 describe("shouldRunTerminalPerfInteractions", () => {
   it("defaults to enabled outside CI when env is unset", () => {
     expect(shouldRunTerminalPerfInteractions({ CI: "false" })).toBe(true);
+    expect(shouldRunTerminalPerfInteractions({ CI: "0" })).toBe(true);
     expect(shouldRunTerminalPerfInteractions({ CI: undefined })).toBe(true);
   });
 
   it("defaults to disabled in CI when env is unset", () => {
     expect(shouldRunTerminalPerfInteractions({ CI: "true" })).toBe(false);
+    expect(shouldRunTerminalPerfInteractions({ CI: "TRUE" })).toBe(false);
+    expect(shouldRunTerminalPerfInteractions({ CI: "1" })).toBe(false);
+    expect(shouldRunTerminalPerfInteractions({ CI: " yes " })).toBe(false);
+    expect(shouldRunTerminalPerfInteractions({ CI: "on" })).toBe(false);
   });
 
   it("supports explicit true values", () => {
