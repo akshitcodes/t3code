@@ -13,7 +13,7 @@ import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
 import { isElectron } from "../env";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { invalidateGitQueries } from "../lib/gitReactQuery";
-import { createStateSource } from "../stateSource";
+import { createStateSource, resolveStateSourceMode } from "../stateSource";
 import { useStore } from "../store";
 import { onServerWelcome } from "../wsNativeApi";
 
@@ -130,9 +130,19 @@ function StateSyncRouter() {
     strict: false,
     select: (params) => params.threadId,
   });
+  const stateSourceMode = useMemo(
+    () =>
+      resolveStateSourceMode(
+        (import.meta.env.VITE_T3CODE_STATE_SOURCE_MODE as string | undefined) ?? undefined,
+      ),
+    [],
+  );
   const lastStateSeqRef = useRef(0);
   const stateQueueRef = useRef(Promise.resolve());
-  const stateSource = useMemo(() => (api ? createStateSource(api) : null), [api]);
+  const stateSource = useMemo(
+    () => (api ? createStateSource(api, { mode: stateSourceMode }) : null),
+    [api, stateSourceMode],
+  );
 
   useEffect(() => {
     if (!api || !stateSource) return;

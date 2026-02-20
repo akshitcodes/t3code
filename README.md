@@ -120,6 +120,12 @@ Optional diagnostics:
 - `T3CODE_LIVESTORE_CATCHUP_PARITY_CHECK=1`
   - In `livestore-read-pilot` mode, compares LiveStore vs legacy `state.catchUp` responses and logs drift diagnostics.
 
+Web client state-source selection:
+
+- `VITE_T3CODE_STATE_SOURCE_MODE=legacy-api|livestore-read-pilot`
+  - Selects the web state-source adapter mode.
+  - Current behavior is protocol-compatible in both modes (delegates to `api.state.*`) while preserving a client-side seam for future LiveStore-native source wiring.
+
 ## Provider architecture
 
 The web app communicates with the server via WebSocket using a simple JSON-RPC-style protocol:
