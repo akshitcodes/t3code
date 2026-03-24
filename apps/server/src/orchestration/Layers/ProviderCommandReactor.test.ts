@@ -94,6 +94,7 @@ describe("ProviderCommandReactor", () => {
   async function createHarness(input?: {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
+    readonly sessionModelSwitch?: "unsupported" | "in-session";
   }) {
     const now = new Date().toISOString();
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
@@ -192,9 +193,9 @@ describe("ProviderCommandReactor", () => {
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
       listSessions: () => Effect.succeed(runtimeSessions),
-      getCapabilities: (provider) =>
+      getCapabilities: (_provider) =>
         Effect.succeed({
-          sessionModelSwitch: provider === "codex" ? "in-session" : "in-session",
+          sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
         }),
       rollbackConversation: () => unsupported(),
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
@@ -553,6 +554,57 @@ describe("ProviderCommandReactor", () => {
       summary: "Provider turn start failed",
       payload: {
         detail: expect.stringContaining("cannot switch to 'claudeAgent'"),
+      },
+    });
+  });
+
+  it("preserves the active session model when in-session model switching is unsupported", async () => {
+    const harness = await createHarness({ sessionModelSwitch: "unsupported" });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-unsupported-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-unsupported-1"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-unsupported-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-unsupported-2"),
+          role: "user",
+          text: "second",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
       },
     });
   });
