@@ -50,20 +50,17 @@ function mergeThreadModelOptions(
   cached: ProviderModelOptions | undefined,
   incoming: ProviderModelOptions | undefined,
 ): ProviderModelOptions | undefined {
-  if (!cached && !incoming) {
-    return undefined;
+  if (incoming === undefined) return cached;
+  if (cached === undefined) return incoming;
+
+  const providerKeys = ["codex", "claudeAgent", "cursor"] as const;
+  const next: Record<string, unknown> = {};
+  for (const key of providerKeys) {
+    const value = key in incoming ? incoming[key] : cached[key];
+    if (value !== undefined) {
+      next[key] = value;
+    }
   }
-  const next = {
-    ...(incoming?.codex !== undefined || cached?.codex !== undefined
-      ? { codex: incoming?.codex ?? cached?.codex }
-      : {}),
-    ...(incoming?.claudeAgent !== undefined || cached?.claudeAgent !== undefined
-      ? { claudeAgent: incoming?.claudeAgent ?? cached?.claudeAgent }
-      : {}),
-    ...(incoming?.cursor !== undefined || cached?.cursor !== undefined
-      ? { cursor: incoming?.cursor ?? cached?.cursor }
-      : {}),
-  } satisfies Partial<ProviderModelOptions>;
   return Object.keys(next).length > 0 ? (next as ProviderModelOptions) : undefined;
 }
 
@@ -405,8 +402,12 @@ const make = Effect.gen(function* () {
       threadModelOptions.get(input.threadId),
       input.modelOptions,
     );
-    if (mergedModelOptions !== undefined) {
-      threadModelOptions.set(input.threadId, mergedModelOptions);
+    if (input.modelOptions !== undefined) {
+      if (mergedModelOptions !== undefined) {
+        threadModelOptions.set(input.threadId, mergedModelOptions);
+      } else {
+        threadModelOptions.delete(input.threadId);
+      }
     }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];

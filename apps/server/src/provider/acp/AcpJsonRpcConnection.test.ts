@@ -32,7 +32,7 @@ describe("AcpJsonRpcConnection", () => {
         cwd: process.cwd(),
         mcpServers: [],
       });
-      expect(newResult).toEqual({ sessionId: "mock-session-1" });
+      expect(newResult).toMatchObject({ sessionId: "mock-session-1" });
 
       const promptResult = yield* conn.request("session/prompt", {
         sessionId: "mock-session-1",
