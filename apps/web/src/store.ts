@@ -1,7 +1,5 @@
 import { Fragment, type ReactNode, createElement, useEffect } from "react";
 import {
-  DEFAULT_MODEL_BY_PROVIDER,
-  type ModelSelection,
   type ProviderKind,
   ThreadId,
   type OrchestrationReadModel,
@@ -323,26 +321,6 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     projects,
     threads,
     threadsHydrated: true,
-  };
-}
-
-export function resolveModelSelection(
-  modelSelection: ModelSelection | null | undefined,
-  fallbackProvider: ProviderKind,
-  fallbackModel?: string | null,
-): ModelSelection {
-  if (modelSelection) {
-    return {
-      ...modelSelection,
-      model: resolveModelSlugForProvider(modelSelection.provider, modelSelection.model),
-    };
-  }
-  return {
-    provider: fallbackProvider,
-    model: resolveModelSlugForProvider(
-      fallbackProvider,
-      fallbackModel ?? DEFAULT_MODEL_BY_PROVIDER[fallbackProvider],
-    ),
   };
 }
 
