@@ -8,8 +8,6 @@ import * as nodePath from "node:path";
 import {
   ApprovalRequestId,
   EventId,
-  RuntimeItemId,
-  type ToolLifecycleItemType,
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
   type ProviderRuntimeEvent,
@@ -47,9 +45,15 @@ import {
 import { makeAcpSessionRuntime, type AcpSessionRuntime } from "../acp/AcpSessionRuntime.ts";
 import { acpPermissionOutcome, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import {
+  makeAcpContentDeltaEvent,
+  makeAcpPlanUpdatedEvent,
+  makeAcpRequestOpenedEvent,
+  makeAcpRequestResolvedEvent,
+  makeAcpToolCallEvent,
+} from "../acp/AcpCoreRuntimeEvents.ts";
+import {
   type AcpSessionMode,
   type AcpSessionModeState,
-  type AcpToolCallState,
   parsePermissionRequest,
 } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggers } from "../acp/AcpNativeLogging.ts";
@@ -70,7 +74,6 @@ const CURSOR_RESUME_VERSION = 1 as const;
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
-type AcpRawSource = "acp.jsonrpc" | "acp.cursor.extension";
 
 export interface CursorAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
@@ -160,55 +163,6 @@ function isPlanMode(mode: AcpSessionMode): boolean {
   return findModeByAliases([mode], ACP_PLAN_MODE_ALIASES) !== undefined;
 }
 
-function canonicalRequestTypeFromAcpKind(
-  kind: string | "unknown",
-): "exec_command_approval" | "file_read_approval" | "file_change_approval" | "unknown" {
-  switch (kind) {
-    case "execute":
-      return "exec_command_approval";
-    case "read":
-      return "file_read_approval";
-    case "edit":
-    case "delete":
-    case "move":
-      return "file_change_approval";
-    default:
-      return "unknown";
-  }
-}
-
-function canonicalItemTypeFromAcpToolKind(kind: string | undefined): ToolLifecycleItemType {
-  switch (kind) {
-    case "execute":
-      return "command_execution";
-    case "edit":
-    case "delete":
-    case "move":
-      return "file_change";
-    case "search":
-    case "fetch":
-      return "web_search";
-    default:
-      return "dynamic_tool_call";
-  }
-}
-
-function runtimeItemStatusFromAcpToolStatus(
-  status: AcpToolCallState["status"],
-): "inProgress" | "completed" | "failed" | undefined {
-  switch (status) {
-    case "pending":
-    case "inProgress":
-      return "inProgress";
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    default:
-      return undefined;
-  }
-}
-
 function resolveRequestedModeId(input: {
   readonly interactionMode: ProviderInteractionMode | undefined;
   readonly runtimeMode: RuntimeMode;
@@ -264,140 +218,6 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
 
-    const makeRequestOpenedEvent = (input: {
-      readonly threadId: ThreadId;
-      readonly turnId: TurnId | undefined;
-      readonly requestId: RuntimeRequestId;
-      readonly kind: string | "unknown";
-      readonly detail: string;
-      readonly args: unknown;
-      readonly source: AcpRawSource;
-      readonly method: string;
-      readonly rawPayload: unknown;
-    }): Effect.Effect<ProviderRuntimeEvent> =>
-      Effect.map(makeEventStamp(), (stamp) => ({
-        type: "request.opened",
-        ...stamp,
-        provider: PROVIDER,
-        threadId: input.threadId,
-        turnId: input.turnId,
-        requestId: input.requestId,
-        payload: {
-          requestType: canonicalRequestTypeFromAcpKind(input.kind),
-          detail: input.detail,
-          args: input.args,
-        },
-        raw: {
-          source: input.source,
-          method: input.method,
-          payload: input.rawPayload,
-        },
-      }));
-
-    const makeRequestResolvedEvent = (input: {
-      readonly threadId: ThreadId;
-      readonly turnId: TurnId | undefined;
-      readonly requestId: RuntimeRequestId;
-      readonly kind: string | "unknown";
-      readonly decision: ProviderApprovalDecision;
-    }): Effect.Effect<ProviderRuntimeEvent> =>
-      Effect.map(makeEventStamp(), (stamp) => ({
-        type: "request.resolved",
-        ...stamp,
-        provider: PROVIDER,
-        threadId: input.threadId,
-        turnId: input.turnId,
-        requestId: input.requestId,
-        payload: {
-          requestType: canonicalRequestTypeFromAcpKind(input.kind),
-          decision: input.decision,
-        },
-      }));
-
-    const makePlanUpdatedEvent = (input: {
-      readonly threadId: ThreadId;
-      readonly turnId: TurnId | undefined;
-      readonly payload: {
-        readonly explanation?: string | null;
-        readonly plan: ReadonlyArray<{
-          readonly step: string;
-          readonly status: "pending" | "inProgress" | "completed";
-        }>;
-      };
-      readonly source: AcpRawSource;
-      readonly method: string;
-      readonly rawPayload: unknown;
-    }): Effect.Effect<ProviderRuntimeEvent> =>
-      Effect.map(makeEventStamp(), (stamp) => ({
-        type: "turn.plan.updated",
-        ...stamp,
-        provider: PROVIDER,
-        threadId: input.threadId,
-        turnId: input.turnId,
-        payload: input.payload,
-        raw: {
-          source: input.source,
-          method: input.method,
-          payload: input.rawPayload,
-        },
-      }));
-
-    const makeToolCallRuntimeEvent = (input: {
-      readonly threadId: ThreadId;
-      readonly turnId: TurnId | undefined;
-      readonly toolCall: AcpToolCallState;
-      readonly rawPayload: unknown;
-    }): Effect.Effect<ProviderRuntimeEvent> =>
-      Effect.map(makeEventStamp(), (stamp) => {
-        const runtimeStatus = runtimeItemStatusFromAcpToolStatus(input.toolCall.status);
-        return {
-          type:
-            input.toolCall.status === "completed" || input.toolCall.status === "failed"
-              ? "item.completed"
-              : "item.updated",
-          ...stamp,
-          provider: PROVIDER,
-          threadId: input.threadId,
-          turnId: input.turnId,
-          itemId: RuntimeItemId.makeUnsafe(input.toolCall.toolCallId),
-          payload: {
-            itemType: canonicalItemTypeFromAcpToolKind(input.toolCall.kind),
-            ...(runtimeStatus ? { status: runtimeStatus } : {}),
-            ...(input.toolCall.title ? { title: input.toolCall.title } : {}),
-            ...(input.toolCall.detail ? { detail: input.toolCall.detail } : {}),
-            ...(Object.keys(input.toolCall.data).length > 0 ? { data: input.toolCall.data } : {}),
-          },
-          raw: {
-            source: "acp.jsonrpc",
-            method: "session/update",
-            payload: input.rawPayload,
-          },
-        } satisfies ProviderRuntimeEvent;
-      });
-
-    const makeContentDeltaEvent = (input: {
-      readonly threadId: ThreadId;
-      readonly turnId: TurnId | undefined;
-      readonly text: string;
-      readonly rawPayload: unknown;
-    }): Effect.Effect<ProviderRuntimeEvent> =>
-      Effect.map(makeEventStamp(), (stamp) => ({
-        type: "content.delta",
-        ...stamp,
-        provider: PROVIDER,
-        threadId: input.threadId,
-        turnId: input.turnId,
-        payload: {
-          streamKind: "assistant_text",
-          delta: input.text,
-        },
-        raw: {
-          source: "acp.jsonrpc",
-          method: "session/update",
-          payload: input.rawPayload,
-        },
-      }));
-
     const logNative = (
       threadId: ThreadId,
       method: string,
@@ -444,7 +264,9 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
         }
         ctx.lastPlanFingerprint = fingerprint;
         yield* offerRuntimeEvent(
-          yield* makePlanUpdatedEvent({
+          makeAcpPlanUpdatedEvent({
+            stamp: yield* makeEventStamp(),
+            provider: PROVIDER,
             threadId: ctx.threadId,
             turnId: ctx.activeTurnId,
             payload,
@@ -654,11 +476,13 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
                   kind: permissionRequest.kind,
                 });
                 yield* offerRuntimeEvent(
-                  yield* makeRequestOpenedEvent({
+                  makeAcpRequestOpenedEvent({
+                    stamp: yield* makeEventStamp(),
+                    provider: PROVIDER,
                     threadId: input.threadId,
                     turnId: ctx?.activeTurnId,
                     requestId: runtimeRequestId,
-                    kind: permissionRequest.kind,
+                    permissionRequest,
                     detail: permissionRequest.detail ?? JSON.stringify(params).slice(0, 2000),
                     args: params,
                     source: "acp.jsonrpc",
@@ -669,11 +493,13 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
                 const resolved = yield* Deferred.await(decision);
                 pendingApprovals.delete(requestId);
                 yield* offerRuntimeEvent(
-                  yield* makeRequestResolvedEvent({
+                  makeAcpRequestResolvedEvent({
+                    stamp: yield* makeEventStamp(),
+                    provider: PROVIDER,
                     threadId: input.threadId,
                     turnId: ctx?.activeTurnId,
                     requestId: runtimeRequestId,
-                    kind: permissionRequest.kind,
+                    permissionRequest,
                     decision: resolved,
                   }),
                 );
@@ -749,7 +575,9 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
                 case "ToolCallUpdated":
                   yield* logNative(ctx.threadId, "session/update", event.rawPayload, "acp.jsonrpc");
                   yield* offerRuntimeEvent(
-                    yield* makeToolCallRuntimeEvent({
+                    makeAcpToolCallEvent({
+                      stamp: yield* makeEventStamp(),
+                      provider: PROVIDER,
                       threadId: ctx.threadId,
                       turnId: ctx.activeTurnId,
                       toolCall: event.toolCall,
@@ -760,7 +588,9 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
                 case "ContentDelta":
                   yield* logNative(ctx.threadId, "session/update", event.rawPayload, "acp.jsonrpc");
                   yield* offerRuntimeEvent(
-                    yield* makeContentDeltaEvent({
+                    makeAcpContentDeltaEvent({
+                      stamp: yield* makeEventStamp(),
+                      provider: PROVIDER,
                       threadId: ctx.threadId,
                       turnId: ctx.activeTurnId,
                       text: event.text,

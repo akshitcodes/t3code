@@ -22,10 +22,10 @@ describe("resolveCursorAcpModelId", () => {
     );
   });
 
-  it("maps legacy cursor aliases onto the canonical base slug", () => {
-    expect(resolveCursorAcpModelId("gpt-5.4-1m", undefined)).toBe("gpt-5.4");
-    expect(resolveCursorAcpModelId("auto", undefined)).toBe("auto[]");
-    expect(resolveCursorAcpModelId("claude-4.6-opus", undefined)).toBe("claude-opus-4-6");
+  it("preserves unrecognized ACP model slugs instead of forcing bracket notation", () => {
+    expect(resolveCursorAcpModelId("gpt-5.4-1m", undefined)).toBe("gpt-5.4-1m");
+    expect(resolveCursorAcpModelId("auto", undefined)).toBe("auto");
+    expect(resolveCursorAcpModelId("claude-4.6-opus", undefined)).toBe("claude-4.6-opus");
   });
 
   it("passes custom models through unchanged", () => {
