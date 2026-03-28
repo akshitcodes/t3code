@@ -352,7 +352,11 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       Effect.provide(
         makeCursorAdapterLive().pipe(
           Layer.provideMerge(ServerSettingsService.layerTest()),
-          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+          Layer.provideMerge(
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "t3code-cursor-adapter-test-",
+            }),
+          ),
           Layer.provideMerge(NodeServices.layer),
         ),
       ),
@@ -446,6 +450,91 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       );
 
       yield* adapter.stopSession(threadId);
+    }),
+  );
+  it.effect("stopping a session settles pending approval waits", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.makeUnsafe("cursor-stop-pending-approval");
+      const approvalRequested = yield* Deferred.make<void>();
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_EMIT_TOOL_CALLS: "1" }),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (String(event.threadId) !== String(threadId) || event.type !== "request.opened") {
+          return Effect.void;
+        }
+        return Deferred.succeed(approvalRequested, undefined).pipe(Effect.ignore);
+      }).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: "cursor",
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { provider: "cursor", model: "default" },
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "run a tool call and then stop",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+
+      yield* Deferred.await(approvalRequested);
+      yield* adapter.stopSession(threadId);
+      yield* Fiber.await(sendTurnFiber);
+
+      assert.equal(yield* adapter.hasSession(threadId), false);
+    }),
+  );
+
+  it.effect("stopping a session settles pending user-input waits", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.makeUnsafe("cursor-stop-pending-user-input");
+      const userInputRequested = yield* Deferred.make<void>();
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_EMIT_ASK_QUESTION: "1" }),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (String(event.threadId) !== String(threadId) || event.type !== "user-input.requested") {
+          return Effect.void;
+        }
+        return Deferred.succeed(userInputRequested, undefined).pipe(Effect.ignore);
+      }).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: "cursor",
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { provider: "cursor", model: "default" },
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "ask me a question and then stop",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+
+      yield* Deferred.await(userInputRequested);
+      yield* adapter.stopSession(threadId);
+      yield* Fiber.await(sendTurnFiber);
+
+      assert.equal(yield* adapter.hasSession(threadId), false);
     }),
   );
 

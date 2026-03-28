@@ -11,6 +11,7 @@ import { AGENT_METHODS, CLIENT_METHODS } from "effect-acp/schema";
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
+const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const sessionId = "mock-session-1";
@@ -54,6 +55,7 @@ const availableModes = [
   },
 ];
 const pendingPermissionRequests = new Map();
+const pendingAskQuestionRequests = new Map();
 const cancelledPromptRequestIds = new Set<number | string>();
 
 function send(obj: unknown) {
@@ -140,6 +142,17 @@ rl.on("line", (line) => {
       jsonrpc: "2.0",
       id: pending.promptRequestId,
       result: { stopReason: cancelled ? "cancelled" : "end_turn" },
+    });
+    return;
+  }
+
+  if (method === undefined && id !== undefined && pendingAskQuestionRequests.has(id)) {
+    const pending = pendingAskQuestionRequests.get(id);
+    pendingAskQuestionRequests.delete(id);
+    send({
+      jsonrpc: "2.0",
+      id: pending.promptRequestId,
+      result: { stopReason: "end_turn" },
     });
     return;
   }
@@ -282,6 +295,33 @@ rl.on("line", (line) => {
             { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
             { optionId: "allow-always", name: "Allow always", kind: "allow_always" },
             { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+          ],
+        },
+      });
+      return;
+    }
+    if (emitAskQuestion) {
+      const askQuestionRequestId = nextRequestId++;
+      pendingAskQuestionRequests.set(askQuestionRequestId, {
+        promptRequestId: id,
+        sessionId: requestedSessionId,
+      });
+      send({
+        jsonrpc: "2.0",
+        id: askQuestionRequestId,
+        method: "cursor/ask_question",
+        params: {
+          toolCallId: "ask-question-tool-call-1",
+          title: "Question",
+          questions: [
+            {
+              id: "scope",
+              prompt: "Which scope?",
+              options: [
+                { id: "workspace", label: "Workspace" },
+                { id: "session", label: "Session" },
+              ],
+            },
           ],
         },
       });
