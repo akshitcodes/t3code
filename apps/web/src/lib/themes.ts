@@ -164,7 +164,9 @@ const STYLE_ELEMENT_ID = "t3code-theme-tokens";
 function buildCssBlock(selector: string, tokens: ThemeTokenMap): string {
   const entries = Object.entries(tokens) as [ThemeToken, string][];
   if (entries.length === 0) return "";
-  const declarations = entries.map(([token, value]) => `  --color-${token}: ${value};`).join("\n");
+  // Override the intermediate CSS variables (--primary, --ring, etc.)
+  // which feed into Tailwind's --color-* via @theme inline { --color-primary: var(--primary) }.
+  const declarations = entries.map(([token, value]) => `  --${token}: ${value};`).join("\n");
   return `${selector} {\n${declarations}\n}`;
 }
 

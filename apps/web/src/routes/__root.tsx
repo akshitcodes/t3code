@@ -39,6 +39,11 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
+  // Mount appearance system — drives .dark class, theme tokens, and Electron sync.
+  // Must be called before any early returns to satisfy React's Rules of Hooks.
+  // The import also triggers module-scope FOUC prevention.
+  useAppearance();
+
   if (!readNativeApi()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
@@ -50,10 +55,6 @@ function RootRouteView() {
       </div>
     );
   }
-
-  // Mount appearance system — drives .dark class, theme tokens, and Electron sync.
-  // The import also triggers module-scope FOUC prevention.
-  useAppearance();
 
   return (
     <ToastProvider>
