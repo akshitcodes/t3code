@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -51,6 +51,23 @@ describe("buildKeybindingsJsonSchema", () => {
 
       expect(latestSchema).toEqual(versionedSchema);
       expect(latestSchema.title).toBe("T3 Code Keybindings");
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips writing a versioned schema file when the latest schema is unchanged", () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "t3-keybindings-schema-"));
+
+    try {
+      const latestOnly = writeKeybindingsJsonSchemas({ rootDir });
+      expect(latestOnly.changed).toBe(true);
+
+      const result = writeKeybindingsJsonSchemas({ rootDir, version: "1.2.3" });
+      expect(result.changed).toBe(false);
+      expect(existsSync(resolve(rootDir, getVersionedKeybindingsSchemaRelativePath("1.2.3")))).toBe(
+        false,
+      );
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
     }

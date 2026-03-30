@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -58,6 +58,23 @@ describe("buildServerSettingsJsonSchema", () => {
 
       expect(latestSchema).toEqual(versionedSchema);
       expect(latestSchema.title).toBe("T3 Code Server Settings");
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips writing a versioned schema file when the latest schema is unchanged", () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "t3-server-settings-schema-"));
+
+    try {
+      const latestOnly = writeServerSettingsJsonSchemas({ rootDir });
+      expect(latestOnly.changed).toBe(true);
+
+      const result = writeServerSettingsJsonSchemas({ rootDir, version: "1.2.3" });
+      expect(result.changed).toBe(false);
+      expect(
+        existsSync(resolve(rootDir, getVersionedServerSettingsSchemaRelativePath("1.2.3"))),
+      ).toBe(false);
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
     }

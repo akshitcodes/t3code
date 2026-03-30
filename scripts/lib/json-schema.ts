@@ -118,12 +118,13 @@ export function writeJsonSchemaArtifacts(options: {
   readonly changed: boolean;
 } {
   const rootDir = resolve(options.rootDir ?? process.cwd());
-  let changed = writeJsonFileIfChanged(
+  const latestChanged = writeJsonFileIfChanged(
     resolve(rootDir, options.latestRelativePath),
     options.document,
   );
+  let changed = latestChanged;
 
-  if (options.version) {
+  if (options.version && latestChanged) {
     changed =
       writeJsonFileIfChanged(
         resolve(rootDir, options.getVersionedRelativePath(options.version)),
