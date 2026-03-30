@@ -23,10 +23,7 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
-const makeTrimmedStringSetting = (description: string) =>
-  Schema.String.annotate({ description }).pipe(
-    Schema.decodeTo(TrimmedString, SchemaTransformation.passthrough()),
-  );
+const makeTrimmedStringSetting = (description: string) => TrimmedString.annotate({ description });
 
 export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.annotate({
