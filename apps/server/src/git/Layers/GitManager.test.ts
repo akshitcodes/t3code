@@ -25,6 +25,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 interface FakeGhScenario {
   prListSequence?: string[];
   prListByHeadSelector?: Record<string, string>;
+  prListSequenceByHeadSelector?: Record<string, string[]>;
   createdPrUrl?: string;
   defaultBranch?: string;
   pullRequest?: {
@@ -253,6 +254,12 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   ghCalls: string[];
 } {
   const prListQueue = [...(scenario.prListSequence ?? [])];
+  const prListQueueByHeadSelector = new Map(
+    Object.entries(scenario.prListSequenceByHeadSelector ?? {}).map(([headSelector, values]) => [
+      headSelector,
+      [...values],
+    ]),
+  );
   const ghCalls: string[] = [];
 
   const execute: GitHubCliShape["execute"] = (input) => {
@@ -269,11 +276,15 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         headSelectorIndex >= 0 && headSelectorIndex < args.length - 1
           ? args[headSelectorIndex + 1]
           : undefined;
+      const mappedQueue =
+        typeof headSelector === "string"
+          ? prListQueueByHeadSelector.get(headSelector)?.shift()
+          : undefined;
       const mappedStdout =
         typeof headSelector === "string"
           ? scenario.prListByHeadSelector?.[headSelector]
           : undefined;
-      const stdout = (mappedStdout ?? prListQueue.shift() ?? "[]") + "\n";
+      const stdout = (mappedQueue ?? mappedStdout ?? prListQueue.shift() ?? "[]") + "\n";
       return Effect.succeed({
         stdout,
         stderr: "",
@@ -1547,23 +1558,22 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
-          prListSequence: [
-            JSON.stringify([]),
-            JSON.stringify([]),
-            JSON.stringify([]),
-            JSON.stringify([]),
-            JSON.stringify([]),
-            JSON.stringify([]),
-            JSON.stringify([
-              {
-                number: 188,
-                title: "Add stacked git actions",
-                url: "https://github.com/pingdotgg/codething-mvp/pull/188",
-                baseRefName: "main",
-                headRefName: "statemachine",
-              },
-            ]),
-          ],
+          prListSequenceByHeadSelector: {
+            "octocat:statemachine": [
+              JSON.stringify([]),
+              JSON.stringify([
+                {
+                  number: 188,
+                  title: "Add stacked git actions",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/188",
+                  baseRefName: "main",
+                  headRefName: "statemachine",
+                },
+              ]),
+            ],
+            "fork-seed:statemachine": [JSON.stringify([])],
+            statemachine: [JSON.stringify([])],
+          },
         },
       });
 
