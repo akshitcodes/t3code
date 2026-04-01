@@ -76,6 +76,8 @@ const rpcClientMock = {
   },
   orchestration: {
     getSnapshot: vi.fn(),
+    getActiveSnapshot: vi.fn(),
+    listArchivedThreads: vi.fn(),
     dispatchCommand: vi.fn(),
     getTurnDiff: vi.fn(),
     getFullThreadDiff: vi.fn(),

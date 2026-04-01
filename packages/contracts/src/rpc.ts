@@ -31,12 +31,16 @@ import {
   OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
+  OrchestrationGetActiveSnapshotError,
+  OrchestrationGetActiveSnapshotInput,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetSnapshotError,
   OrchestrationGetSnapshotInput,
   OrchestrationGetTurnDiffError,
   OrchestrationGetTurnDiffInput,
+  OrchestrationListArchivedThreadsError,
+  OrchestrationListArchivedThreadsInput,
   OrchestrationReplayEventsError,
   OrchestrationReplayEventsInput,
   OrchestrationRpcSchemas,
@@ -263,6 +267,15 @@ export const WsOrchestrationGetSnapshotRpc = Rpc.make(ORCHESTRATION_WS_METHODS.g
   error: OrchestrationGetSnapshotError,
 });
 
+export const WsOrchestrationGetActiveSnapshotRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getActiveSnapshot,
+  {
+    payload: OrchestrationGetActiveSnapshotInput,
+    success: OrchestrationRpcSchemas.getActiveSnapshot.output,
+    error: OrchestrationGetActiveSnapshotError,
+  },
+);
+
 export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.dispatchCommand,
   {
@@ -284,6 +297,15 @@ export const WsOrchestrationGetFullThreadDiffRpc = Rpc.make(
     payload: OrchestrationGetFullThreadDiffInput,
     success: OrchestrationRpcSchemas.getFullThreadDiff.output,
     error: OrchestrationGetFullThreadDiffError,
+  },
+);
+
+export const WsOrchestrationListArchivedThreadsRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.listArchivedThreads,
+  {
+    payload: OrchestrationListArchivedThreadsInput,
+    success: OrchestrationRpcSchemas.listArchivedThreads.output,
+    error: OrchestrationListArchivedThreadsError,
   },
 );
 
@@ -352,8 +374,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsOrchestrationGetSnapshotRpc,
+  WsOrchestrationGetActiveSnapshotRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
+  WsOrchestrationListArchivedThreadsRpc,
   WsOrchestrationReplayEventsRpc,
 );

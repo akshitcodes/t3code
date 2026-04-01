@@ -147,7 +147,10 @@ function buildFixture(): TestFixture {
 }
 
 function resolveWsRpc(tag: string): unknown {
-  if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
+  if (
+    tag === ORCHESTRATION_WS_METHODS.getSnapshot ||
+    tag === ORCHESTRATION_WS_METHODS.getActiveSnapshot
+  ) {
     return fixture.snapshot;
   }
   if (tag === WS_METHODS.serverGetConfig) {

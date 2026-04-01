@@ -217,6 +217,8 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         Layer.mock(ProjectionSnapshotQuery)({
           getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+          getActiveSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+          listArchivedThreads: () => Effect.succeed([]),
           ...options?.layers?.projectionSnapshotQuery,
         }),
       ),
@@ -1098,11 +1100,26 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
         ],
       };
+      const archivedThreads = [
+        {
+          threadId: ThreadId.makeUnsafe("thread-archived"),
+          projectId: ProjectId.makeUnsafe("project-a"),
+          projectTitle: "Project A",
+          workspaceRoot: "/tmp/project-a",
+          title: "Archived Thread",
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: now,
+        },
+      ];
 
       yield* buildAppUnderTest({
         layers: {
           projectionSnapshotQuery: {
             getSnapshot: () => Effect.succeed(snapshot),
+            getActiveSnapshot: () => Effect.succeed(snapshot),
+            listArchivedThreads: () => Effect.succeed(archivedThreads),
           },
           orchestrationEngine: {
             dispatch: () => Effect.succeed({ sequence: 7 }),
@@ -1132,6 +1149,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) => client[ORCHESTRATION_WS_METHODS.getSnapshot]({})),
       );
       assert.equal(snapshotResult.snapshotSequence, 1);
+
+      const activeSnapshotResult = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[ORCHESTRATION_WS_METHODS.getActiveSnapshot]({})),
+      );
+      assert.equal(activeSnapshotResult.snapshotSequence, 1);
 
       const dispatchResult = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
@@ -1165,6 +1187,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.equal(fullDiffResult.diff, "full-diff");
+
+      const archivedThreadsResult = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.listArchivedThreads]({}),
+        ),
+      );
+      assert.deepEqual(archivedThreadsResult, archivedThreads);
 
       const replayResult = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
