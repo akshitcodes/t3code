@@ -1516,7 +1516,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
     ).pipe(Effect.forkIn(workerScope));
 
     yield* Effect.addFinalizer(() =>
-      Effect.gen(function* () {
+      Effect.fn("terminal.cleanupAllSessions")(function* () {
         const sessions = yield* modifyManagerState(
           (state) =>
             [
@@ -1541,7 +1541,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           concurrency: "unbounded",
           discard: true,
         });
-      }).pipe(Effect.ignoreCause({ log: true })),
+      })().pipe(Effect.ignoreCause({ log: true })),
     );
 
     const open: TerminalManagerShape["open"] = (input) =>
