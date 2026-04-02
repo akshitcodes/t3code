@@ -39,7 +39,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     try {
       sink.write(chunk);
     } catch {
-      buffer = [];
+      buffer.unshift(chunk);
     }
   };
 
@@ -59,7 +59,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
           flushUnsafe();
         }
       } catch {
-        buffer = [];
+        return;
       }
     },
     flush,

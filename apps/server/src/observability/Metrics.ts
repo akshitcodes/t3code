@@ -23,6 +23,14 @@ export const orchestrationCommandDuration = Metric.timer("t3_orchestration_comma
   description: "Orchestration command dispatch duration.",
 });
 
+export const orchestrationCommandAckDuration = Metric.timer(
+  "t3_orchestration_command_ack_duration",
+  {
+    description:
+      "Time from orchestration command dispatch to the first committed domain event emitted for that command.",
+  },
+);
+
 export const orchestrationEventsProcessedTotal = Metric.counter(
   "t3_orchestration_events_processed_total",
   {
@@ -73,8 +81,6 @@ export const dbQueryDuration = Metric.timer("t3_db_query_duration", {
 export const metricAttributes = (
   attributes: Readonly<Record<string, unknown>>,
 ): ReadonlyArray<[string, string]> => Object.entries(compactMetricAttributes(attributes));
-
-export const withMetricAttributes = Metric.withAttributes;
 
 export const increment = (
   metric: Metric.Metric<number, unknown>,

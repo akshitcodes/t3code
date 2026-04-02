@@ -9,6 +9,14 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function markSeen(value: object, seen: WeakSet<object>): boolean {
+  if (seen.has(value)) {
+    return true;
+  }
+  seen.add(value);
+  return false;
+}
+
 function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
   if (
     value === null ||
@@ -33,9 +41,15 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
     };
   }
   if (Array.isArray(value)) {
+    if (markSeen(value, seen)) {
+      return "[Circular]";
+    }
     return value.map((entry) => normalizeJsonValue(entry, seen));
   }
   if (value instanceof Map) {
+    if (markSeen(value, seen)) {
+      return "[Circular]";
+    }
     return Object.fromEntries(
       Array.from(value.entries(), ([key, entryValue]) => [
         String(key),
@@ -44,15 +58,17 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
     );
   }
   if (value instanceof Set) {
+    if (markSeen(value, seen)) {
+      return "[Circular]";
+    }
     return Array.from(value.values(), (entry) => normalizeJsonValue(entry, seen));
   }
   if (!isPlainObject(value)) {
     return String(value);
   }
-  if (seen.has(value)) {
+  if (markSeen(value, seen)) {
     return "[Circular]";
   }
-  seen.add(value);
   return Object.fromEntries(
     Object.entries(value).map(([key, entryValue]) => [key, normalizeJsonValue(entryValue, seen)]),
   );

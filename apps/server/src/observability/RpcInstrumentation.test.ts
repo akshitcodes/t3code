@@ -1,7 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Metric, Stream } from "effect";
+import { Effect, Exit, Metric, Stream } from "effect";
 
-import { observeRpcEffect, observeRpcStreamEffect } from "./RpcInstrumentation.ts";
+import {
+  observeRpcEffect,
+  observeRpcStream,
+  observeRpcStreamEffect,
+} from "./RpcInstrumentation.ts";
 
 const hasMetricSnapshot = (
   snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
@@ -89,6 +93,66 @@ describe("RpcInstrumentation", () => {
       assert.equal(
         hasMetricSnapshot(snapshots, "t3_rpc_request_duration", {
           method: "rpc.instrumentation.stream",
+        }),
+        true,
+      );
+    }),
+  );
+
+  it.effect("records failure outcomes for direct stream RPC handlers during consumption", () =>
+    Effect.gen(function* () {
+      const exit = yield* Stream.runCollect(
+        observeRpcStream(
+          "rpc.instrumentation.stream.failure",
+          Stream.make("a").pipe(Stream.concat(Stream.fail("boom"))),
+          { "rpc.aggregate": "test" },
+        ).pipe(Stream.withSpan("rpc.instrumentation.stream.failure.span")),
+      ).pipe(Effect.exit);
+
+      assert.equal(Exit.isFailure(exit), true);
+
+      const snapshots = yield* Metric.snapshot;
+
+      assert.equal(
+        hasMetricSnapshot(snapshots, "t3_rpc_requests_total", {
+          method: "rpc.instrumentation.stream.failure",
+          outcome: "failure",
+        }),
+        true,
+      );
+      assert.equal(
+        hasMetricSnapshot(snapshots, "t3_rpc_request_duration", {
+          method: "rpc.instrumentation.stream.failure",
+        }),
+        true,
+      );
+    }),
+  );
+
+  it.effect("records failure outcomes when a stream RPC effect produces a failing stream", () =>
+    Effect.gen(function* () {
+      const exit = yield* Stream.runCollect(
+        observeRpcStreamEffect(
+          "rpc.instrumentation.stream.effect.failure",
+          Effect.succeed(Stream.fail("boom")),
+          { "rpc.aggregate": "test" },
+        ).pipe(Stream.withSpan("rpc.instrumentation.stream.effect.failure.span")),
+      ).pipe(Effect.exit);
+
+      assert.equal(Exit.isFailure(exit), true);
+
+      const snapshots = yield* Metric.snapshot;
+
+      assert.equal(
+        hasMetricSnapshot(snapshots, "t3_rpc_requests_total", {
+          method: "rpc.instrumentation.stream.effect.failure",
+          outcome: "failure",
+        }),
+        true,
+      );
+      assert.equal(
+        hasMetricSnapshot(snapshots, "t3_rpc_request_duration", {
+          method: "rpc.instrumentation.stream.effect.failure",
         }),
         true,
       );

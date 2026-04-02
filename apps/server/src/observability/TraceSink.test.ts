@@ -105,4 +105,48 @@ describe("TraceSink", () => {
       }),
     ),
   );
+
+  it.effect("drops only the invalid record when serialization fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-trace-sink-"));
+        const tracePath = path.join(tempDir, "server.trace.ndjson");
+
+        try {
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+          });
+
+          const circular: Array<unknown> = [];
+          circular.push(circular);
+
+          sink.push(makeRecord("alpha"));
+          sink.push({
+            ...makeRecord("invalid"),
+            attributes: {
+              circular,
+            },
+          } as TraceRecord);
+          sink.push(makeRecord("beta"));
+          yield* sink.close();
+
+          const lines = fs
+            .readFileSync(tracePath, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line) as TraceRecord);
+
+          assert.deepStrictEqual(
+            lines.map((line) => line.name),
+            ["alpha", "beta"],
+          );
+        } finally {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+      }),
+    ),
+  );
 });

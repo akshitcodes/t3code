@@ -5,10 +5,23 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
-import { Deferred, Effect, Layer, Option, PubSub, Queue, Schema, Stream } from "effect";
+import {
+  Deferred,
+  Duration,
+  Effect,
+  Layer,
+  Metric,
+  Option,
+  PubSub,
+  Queue,
+  Schema,
+  Stream,
+} from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  metricAttributes,
+  orchestrationCommandAckDuration,
   orchestrationCommandsTotal,
   orchestrationCommandDuration,
   withMetrics,
@@ -33,6 +46,7 @@ import {
 interface CommandEnvelope {
   command: OrchestrationCommand;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
+  startedAtMs: number;
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
@@ -169,8 +183,21 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         );
 
       readModel = committedCommand.nextReadModel;
-      for (const event of committedCommand.committedEvents) {
+      for (const [index, event] of committedCommand.committedEvents.entries()) {
         yield* PubSub.publish(eventPubSub, event);
+        if (index === 0) {
+          yield* Metric.update(
+            Metric.withAttributes(
+              orchestrationCommandAckDuration,
+              metricAttributes({
+                commandType: envelope.command.type,
+                aggregateKind: aggregateRef.aggregateKind,
+                ackEventType: event.type,
+              }),
+            ),
+            Duration.millis(Math.max(0, Date.now() - envelope.startedAtMs)),
+          );
+        }
       }
       yield* Deferred.succeed(envelope.result, { sequence: committedCommand.lastSequence });
     }).pipe(
@@ -236,7 +263,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
-      yield* Queue.offer(commandQueue, { command, result });
+      yield* Queue.offer(commandQueue, { command, result, startedAtMs: Date.now() });
       return yield* Deferred.await(result);
     });
 
