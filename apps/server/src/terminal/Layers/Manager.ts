@@ -28,17 +28,19 @@ import {
   terminalRestartsTotal,
   terminalSessionsTotal,
 } from "../../observability/Metrics";
+import { arePortListsEqual, normalizeRunningPorts } from "../../process/utils";
+import { TerminalProcessInspector } from "../../process/Services/TerminalProcessInspector";
 import {
-  arePortListsEqual,
-  normalizeRunningPorts,
-  subprocessCheckerToInspector,
-  TerminalProcessInspector,
   type TerminalSubprocessActivity,
   type TerminalSubprocessChecker,
   type TerminalSubprocessInspector,
   type TerminalWebPortInspector,
-} from "../../terminalProcessInspector";
-import { DEFAULT_WEB_PORT_PROBE_TTL_MS, WebPortInspector } from "../../webPortInspector";
+} from "../../process/types";
+import { subprocessCheckerToInspector } from "../../process/Layers/TerminalProcessInspector";
+import {
+  DEFAULT_WEB_PORT_PROBE_TTL_MS,
+  WebPortInspector,
+} from "../../process/Services/WebPortInspector";
 import {
   TerminalCwdError,
   TerminalHistoryError,

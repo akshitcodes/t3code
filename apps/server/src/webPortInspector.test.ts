@@ -3,8 +3,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { assert, it } from "@effect/vitest";
 import { Effect } from "effect";
 
-import { WebPortInspectorLive } from "./webPortInspector";
-import { WebPortInspector } from "./terminalProcessInspector/Services/WebPortInspector";
+import { WebPortInspector } from "./process/Services/WebPortInspector";
+import { WebPortInspectorLive } from "./process/Layers/WebPortInspector";
 
 const closeServer = (server: Server) =>
   Effect.callback<void>((resume) => {

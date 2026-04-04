@@ -22,58 +22,56 @@ interface PosixRunCommand {
   ): Effect.Effect<InspectorCommandResult, TerminalProcessInspectionError>;
 }
 
-export const collectPosixProcessFamilyPids = Effect.fn(
-  "terminalProcessInspector.collectPosixProcessFamilyPids",
-)(function* (
-  terminalPid: number,
-  runCommand: PosixRunCommand,
-): Effect.fn.Return<number[], TerminalProcessInspectionError> {
-  const psResult = yield* runCommand({
-    operation: "TerminalProcessInspector.collectPosixProcessFamilyPids",
-    terminalPid,
-    command: "ps",
-    args: ["-eo", "pid=,ppid="],
-    timeoutMs: 1_000,
-    maxOutputBytes: 262_144,
-  });
-  if (psResult.exitCode !== 0) {
-    return [];
-  }
-
-  const childrenByParentPid = new Map<number, number[]>();
-  for (const line of psResult.stdout.split(/\r?\n/g)) {
-    const [pidRaw, ppidRaw] = line.trim().split(/\s+/g);
-    const pid = Number(pidRaw);
-    const ppid = Number(ppidRaw);
-    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-    const children = childrenByParentPid.get(ppid);
-    if (children) {
-      children.push(pid);
-    } else {
-      childrenByParentPid.set(ppid, [pid]);
+export const collectPosixProcessFamilyPids = Effect.fn("process.collectPosixProcessFamilyPids")(
+  function* (
+    terminalPid: number,
+    runCommand: PosixRunCommand,
+  ): Effect.fn.Return<number[], TerminalProcessInspectionError> {
+    const psResult = yield* runCommand({
+      operation: "TerminalProcessInspector.collectPosixProcessFamilyPids",
+      terminalPid,
+      command: "ps",
+      args: ["-eo", "pid=,ppid="],
+      timeoutMs: 1_000,
+      maxOutputBytes: 262_144,
+    });
+    if (psResult.exitCode !== 0) {
+      return [];
     }
-  }
 
-  const processFamily = new Set<number>([terminalPid]);
-  const pendingParents = [terminalPid];
-  while (pendingParents.length > 0) {
-    const parentPid = pendingParents.shift();
-    if (!parentPid) continue;
-    const childPids = childrenByParentPid.get(parentPid);
-    if (!childPids || childPids.length === 0) continue;
-    for (const childPid of childPids) {
-      if (processFamily.has(childPid)) continue;
-      processFamily.add(childPid);
-      pendingParents.push(childPid);
+    const childrenByParentPid = new Map<number, number[]>();
+    for (const line of psResult.stdout.split(/\r?\n/g)) {
+      const [pidRaw, ppidRaw] = line.trim().split(/\s+/g);
+      const pid = Number(pidRaw);
+      const ppid = Number(ppidRaw);
+      if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+      const children = childrenByParentPid.get(ppid);
+      if (children) {
+        children.push(pid);
+      } else {
+        childrenByParentPid.set(ppid, [pid]);
+      }
     }
-  }
 
-  return [...processFamily];
-});
+    const processFamily = new Set<number>([terminalPid]);
+    const pendingParents = [terminalPid];
+    while (pendingParents.length > 0) {
+      const parentPid = pendingParents.shift();
+      if (!parentPid) continue;
+      const childPids = childrenByParentPid.get(parentPid);
+      if (!childPids || childPids.length === 0) continue;
+      for (const childPid of childPids) {
+        if (processFamily.has(childPid)) continue;
+        processFamily.add(childPid);
+        pendingParents.push(childPid);
+      }
+    }
 
-export const checkPosixListeningPorts = Effect.fn(
-  "terminalProcessInspector.checkPosixListeningPorts",
-)(function* (
+    return [...processFamily];
+  },
+);
+
+export const checkPosixListeningPorts = Effect.fn("process.checkPosixListeningPorts")(function* (
   processIds: number[],
   input: {
     terminalPid: number;

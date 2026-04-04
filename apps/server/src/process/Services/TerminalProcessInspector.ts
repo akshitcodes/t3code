@@ -13,4 +13,4 @@ export interface TerminalProcessInspectorShape {
 export class TerminalProcessInspector extends ServiceMap.Service<
   TerminalProcessInspector,
   TerminalProcessInspectorShape
->()("t3/terminalProcessInspector/Services/TerminalProcessInspector") {}
+>()("t3/process/Services/TerminalProcessInspector") {}

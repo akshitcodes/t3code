@@ -37,7 +37,7 @@ function isLikelyWebProbe(result: WebProbeResult | null): boolean {
   return body.includes("<!doctype") || body.includes("<html") || body.includes("<head");
 }
 
-const probeWebPortOnHost = Effect.fn("webPortInspector.probeWebPortOnHost")(function* (
+const probeWebPortOnHost = Effect.fn("process.probeWebPortOnHost")(function* (
   port: number,
   host: string,
 ): Effect.fn.Return<WebProbeResult | null, WebPortInspectionError> {
@@ -183,7 +183,7 @@ const probeWebPortOnHost = Effect.fn("webPortInspector.probeWebPortOnHost")(func
 });
 
 const makeWebPortInspector = Effect.succeed({
-  inspect: Effect.fn("webPortInspector.inspect")(function* (port) {
+  inspect: Effect.fn("process.inspectWebPort")(function* (port) {
     if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
       return yield* new WebPortInspectionError({
         port,

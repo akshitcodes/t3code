@@ -40,7 +40,7 @@ function commandLabel(command: string, args: ReadonlyArray<string>): string {
   return [command, ...args].join(" ");
 }
 
-const collectOutput = Effect.fn("terminalProcessInspector.collectOutput")(function* (
+const collectOutput = Effect.fn("process.collectOutput")(function* (
   stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
   maxOutputBytes: number,
 ): Effect.fn.Return<CollectOutputResult, PlatformError.PlatformError> {
@@ -85,7 +85,7 @@ const collectOutput = Effect.fn("terminalProcessInspector.collectOutput")(functi
 const makeTerminalProcessInspector = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const runInspectorCommand = Effect.fn("terminalProcessInspector.runInspectorCommand")(function* (
+  const runInspectorCommand = Effect.fn("process.runInspectorCommand")(function* (
     input: RunInspectorCommandInput,
   ) {
     const command = ChildProcess.make(input.command, [...input.args], {
@@ -175,50 +175,50 @@ const makeTerminalProcessInspector = Effect.gen(function* () {
     );
   });
 
-  const inspect: TerminalProcessInspectorShape["inspect"] = Effect.fn(
-    "terminalProcessInspector.inspect",
-  )(function* (terminalPid) {
-    if (!Number.isInteger(terminalPid) || terminalPid <= 0) {
-      return {
-        hasRunningSubprocess: false,
-        runningPorts: [],
-      } satisfies TerminalSubprocessActivity;
-    }
+  const inspect: TerminalProcessInspectorShape["inspect"] = Effect.fn("process.inspect")(
+    function* (terminalPid) {
+      if (!Number.isInteger(terminalPid) || terminalPid <= 0) {
+        return {
+          hasRunningSubprocess: false,
+          runningPorts: [],
+        } satisfies TerminalSubprocessActivity;
+      }
 
-    if (process.platform === "win32") {
-      const childPids = yield* collectWindowsChildPids(terminalPid, runInspectorCommand);
-      const processPidsForPortScan = [terminalPid, ...childPids];
-      const runningPorts = yield* checkWindowsListeningPorts(processPidsForPortScan, {
+      if (process.platform === "win32") {
+        const childPids = yield* collectWindowsChildPids(terminalPid, runInspectorCommand);
+        const processPidsForPortScan = [terminalPid, ...childPids];
+        const runningPorts = yield* checkWindowsListeningPorts(processPidsForPortScan, {
+          terminalPid,
+          runCommand: runInspectorCommand,
+        });
+        return {
+          hasRunningSubprocess: childPids.length > 0 || runningPorts.length > 0,
+          runningPorts,
+        } satisfies TerminalSubprocessActivity;
+      }
+
+      const processFamilyPids = yield* collectPosixProcessFamilyPids(
+        terminalPid,
+        runInspectorCommand,
+      );
+      if (processFamilyPids.length === 0) {
+        return {
+          hasRunningSubprocess: false,
+          runningPorts: [],
+        } satisfies TerminalSubprocessActivity;
+      }
+
+      const subprocessPids = processFamilyPids.filter((pid) => pid !== terminalPid);
+      const runningPorts = yield* checkPosixListeningPorts(processFamilyPids, {
         terminalPid,
         runCommand: runInspectorCommand,
       });
       return {
-        hasRunningSubprocess: childPids.length > 0 || runningPorts.length > 0,
+        hasRunningSubprocess: subprocessPids.length > 0 || runningPorts.length > 0,
         runningPorts,
       } satisfies TerminalSubprocessActivity;
-    }
-
-    const processFamilyPids = yield* collectPosixProcessFamilyPids(
-      terminalPid,
-      runInspectorCommand,
-    );
-    if (processFamilyPids.length === 0) {
-      return {
-        hasRunningSubprocess: false,
-        runningPorts: [],
-      } satisfies TerminalSubprocessActivity;
-    }
-
-    const subprocessPids = processFamilyPids.filter((pid) => pid !== terminalPid);
-    const runningPorts = yield* checkPosixListeningPorts(processFamilyPids, {
-      terminalPid,
-      runCommand: runInspectorCommand,
-    });
-    return {
-      hasRunningSubprocess: subprocessPids.length > 0 || runningPorts.length > 0,
-      runningPorts,
-    } satisfies TerminalSubprocessActivity;
-  });
+    },
+  );
 
   return {
     inspect,
@@ -228,7 +228,7 @@ const makeTerminalProcessInspector = Effect.gen(function* () {
 export const subprocessCheckerToInspector = (
   subprocessChecker: TerminalSubprocessChecker,
 ): TerminalSubprocessInspector =>
-  Effect.fn("terminalProcessInspector.subprocessCheckerToInspector")(function* (terminalPid) {
+  Effect.fn("process.subprocessCheckerToInspector")(function* (terminalPid) {
     return {
       hasRunningSubprocess: yield* subprocessChecker(terminalPid),
       runningPorts: [],

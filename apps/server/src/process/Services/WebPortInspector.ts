@@ -10,5 +10,5 @@ export interface WebPortInspectorShape {
 }
 
 export class WebPortInspector extends ServiceMap.Service<WebPortInspector, WebPortInspectorShape>()(
-  "t3/terminalProcessInspector/Services/WebPortInspector",
+  "t3/process/Services/WebPortInspector",
 ) {}

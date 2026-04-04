@@ -26,10 +26,10 @@ import {
 import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 
-import { TerminalProcessInspectorLive } from "../../terminalProcessInspector/Layers/TerminalProcessInspector";
-import { WebPortInspectorLive } from "../../terminalProcessInspector/Layers/WebPortInspector";
-import { TerminalProcessInspector } from "../../terminalProcessInspector/Services/TerminalProcessInspector";
-import { WebPortInspector } from "../../terminalProcessInspector/Services/WebPortInspector";
+import { TerminalProcessInspectorLive } from "../../process/Layers/TerminalProcessInspector";
+import { WebPortInspectorLive } from "../../process/Layers/WebPortInspector";
+import { TerminalProcessInspector } from "../../process/Services/TerminalProcessInspector";
+import { WebPortInspector } from "../../process/Services/WebPortInspector";
 import type { TerminalManagerShape } from "../Services/Manager";
 import {
   type PtyAdapterShape,

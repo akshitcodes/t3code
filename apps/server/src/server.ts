@@ -43,8 +43,8 @@ import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem"
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
 import { ProjectSetupScriptRunnerLive } from "./project/Layers/ProjectSetupScriptRunner";
 import { ObservabilityLive } from "./observability/Layers/Observability";
-import { TerminalProcessInspectorLive } from "./terminalProcessInspector/Layers/TerminalProcessInspector";
-import { WebPortInspectorLive } from "./terminalProcessInspector/Layers/WebPortInspector";
+import { TerminalProcessInspectorLive } from "./process/Layers/TerminalProcessInspector";
+import { WebPortInspectorLive } from "./process/Layers/WebPortInspector";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
