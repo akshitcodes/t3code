@@ -49,6 +49,7 @@ function SheetViewport({
         side === "left" && "flex justify-start",
         side === "right" && "flex justify-end",
         variant === "inset" && "sm:p-4",
+        className,
       )}
       data-slot="sheet-viewport"
       {...props}
@@ -60,16 +61,18 @@ function SheetPopup({
   className,
   children,
   showCloseButton = true,
+  keepMounted = false,
   side = "right",
   variant = "default",
   ...props
 }: SheetPrimitive.Popup.Props & {
   showCloseButton?: boolean;
+  keepMounted?: boolean;
   side?: "right" | "left" | "top" | "bottom";
   variant?: "default" | "inset";
 }) {
   return (
-    <SheetPortal>
+    <SheetPortal keepMounted={keepMounted}>
       <SheetBackdrop />
       <SheetViewport side={side} variant={variant}>
         <SheetPrimitive.Popup

@@ -1,10 +1,12 @@
+import type { ContextMenuItem } from "@t3tools/contracts";
+
 /**
  * Imperative DOM-based context menu for non-Electron environments.
  * Shows a positioned dropdown and returns a promise that resolves
  * with the clicked item id, or null if dismissed.
  */
 export function showContextMenuFallback<T extends string>(
-  items: readonly { id: T; label: string }[],
+  items: readonly ContextMenuItem<T>[],
   position?: { x: number; y: number },
 ): Promise<T | null> {
   return new Promise<T | null>((resolve) => {
@@ -41,9 +43,17 @@ export function showContextMenuFallback<T extends string>(
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = item.label;
-      btn.className =
-        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-accent cursor-default";
-      btn.addEventListener("click", () => cleanup(item.id));
+      const isDestructiveAction = item.destructive === true || item.id === "delete";
+      const isDisabled = item.disabled === true;
+      btn.disabled = isDisabled;
+      btn.className = isDisabled
+        ? "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-muted-foreground/60 cursor-not-allowed"
+        : isDestructiveAction
+          ? "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-accent cursor-default"
+          : "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-popover-foreground hover:bg-accent cursor-default";
+      if (!isDisabled) {
+        btn.addEventListener("click", () => cleanup(item.id));
+      }
       menu.appendChild(btn);
     }
 

@@ -58,7 +58,9 @@ describe("defaultWebPortInspector", () => {
     const server = createServer((_req, res) => {
       res.statusCode = 200;
       res.setHeader("content-type", "text/html; charset=utf-8");
-      res.end(`<!DOCTYPE html><html><head><title>x</title></head><body>${"x".repeat(20_000)}</body></html>`);
+      res.end(
+        `<!DOCTYPE html><html><head><title>x</title></head><body>${"x".repeat(20_000)}</body></html>`,
+      );
     });
     servers.push(server);
     const port = await listenServer(server);

@@ -7,10 +7,7 @@ import {
 } from "./types";
 import { checkWindowsListeningPorts, collectWindowsChildPids } from "./win32";
 
-export {
-  arePortListsEqual,
-  normalizeRunningPorts,
-} from "./utils";
+export { arePortListsEqual, normalizeRunningPorts } from "./utils";
 
 export type {
   TerminalSubprocessActivity,

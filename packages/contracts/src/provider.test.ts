@@ -1,159 +1,116 @@
 import { describe, expect, it } from "vitest";
+import { Schema } from "effect";
 
-import {
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  providerEventSchema,
-  providerRespondToRequestInputSchema,
-  providerSendTurnInputSchema,
-  providerSessionStartInputSchema,
-} from "./provider";
+import { ProviderSendTurnInput, ProviderSessionStartInput } from "./provider";
 
-describe("providerSessionStartInputSchema", () => {
-  it("defaults to codex with safe policies", () => {
-    const parsed = providerSessionStartInputSchema.parse({});
-    expect(parsed.provider).toBe("codex");
-    expect(parsed.approvalPolicy).toBe("never");
-    expect(parsed.sandboxMode).toBe("workspace-write");
-  });
+const decodeProviderSessionStartInput = Schema.decodeUnknownSync(ProviderSessionStartInput);
+const decodeProviderSendTurnInput = Schema.decodeUnknownSync(ProviderSendTurnInput);
 
-  it("accepts optional resumeThreadId", () => {
-    const parsed = providerSessionStartInputSchema.parse({
-      resumeThreadId: "thread_123",
-    });
-    expect(parsed.resumeThreadId).toBe("thread_123");
-  });
-
-  it("rejects blank resumeThreadId", () => {
-    expect(() =>
-      providerSessionStartInputSchema.parse({
-        resumeThreadId: "   ",
-      }),
-    ).toThrow();
-  });
-});
-
-describe("providerSendTurnInputSchema", () => {
-  it("trims input text and optional model/effort", () => {
-    const parsed = providerSendTurnInputSchema.parse({
-      sessionId: "sess_1",
-      input: "  summarize this repo  ",
-      model: "  gpt-5.2-codex  ",
-      effort: "  high  ",
-    });
-    expect(parsed.input).toBe("summarize this repo");
-    expect(parsed.attachments).toEqual([]);
-    expect(parsed.model).toBe("gpt-5.2-codex");
-    expect(parsed.effort).toBe("high");
-  });
-
-  it("accepts image-only turns", () => {
-    const parsed = providerSendTurnInputSchema.parse({
-      sessionId: "sess_1",
-      attachments: [
-        {
-          type: "image",
-          name: "diagram.png",
-          mimeType: "image/png",
-          sizeBytes: 1_024,
-          dataUrl: "data:image/png;base64,AAAA",
+describe("ProviderSessionStartInput", () => {
+  it("accepts codex-compatible payloads", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "codex",
+      cwd: "/tmp/workspace",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.3-codex",
+        options: {
+          reasoningEffort: "high",
+          fastMode: true,
         },
-      ],
+      },
+      runtimeMode: "full-access",
     });
-    expect(parsed.input).toBeUndefined();
-    expect(parsed.attachments).toHaveLength(1);
+    expect(parsed.runtimeMode).toBe("full-access");
+    expect(parsed.modelSelection?.provider).toBe("codex");
+    expect(parsed.modelSelection?.model).toBe("gpt-5.3-codex");
+    if (parsed.modelSelection?.provider !== "codex") {
+      throw new Error("Expected codex modelSelection");
+    }
+    expect(parsed.modelSelection.options?.reasoningEffort).toBe("high");
+    expect(parsed.modelSelection.options?.fastMode).toBe(true);
   });
 
-  it("rejects turns with neither text nor attachments", () => {
+  it("rejects payloads without runtime mode", () => {
     expect(() =>
-      providerSendTurnInputSchema.parse({
-        sessionId: "sess_1",
+      decodeProviderSessionStartInput({
+        threadId: "thread-1",
+        provider: "codex",
       }),
     ).toThrow();
   });
 
-  it("rejects non-image data urls", () => {
-    expect(() =>
-      providerSendTurnInputSchema.parse({
-        sessionId: "sess_1",
-        attachments: [
-          {
-            type: "image",
-            name: "not-image.txt",
-            mimeType: "text/plain",
-            sizeBytes: 25,
-            dataUrl: "data:text/plain;base64,QQ==",
-          },
-        ],
-      }),
-    ).toThrow();
-  });
-
-  it("rejects more than the max attachment count", () => {
-    expect(() =>
-      providerSendTurnInputSchema.parse({
-        sessionId: "sess_1",
-        attachments: Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS + 1 }, (_, index) => ({
-          type: "image" as const,
-          name: `image-${index}.png`,
-          mimeType: "image/png",
-          sizeBytes: 1_024,
-          dataUrl: "data:image/png;base64,AAAA",
-        })),
-      }),
-    ).toThrow();
+  it("accepts claude runtime knobs", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "claudeAgent",
+      cwd: "/tmp/workspace",
+      modelSelection: {
+        provider: "claudeAgent",
+        model: "claude-sonnet-4-6",
+        options: {
+          thinking: true,
+          effort: "max",
+          fastMode: true,
+        },
+      },
+      runtimeMode: "full-access",
+    });
+    expect(parsed.provider).toBe("claudeAgent");
+    expect(parsed.modelSelection?.provider).toBe("claudeAgent");
+    expect(parsed.modelSelection?.model).toBe("claude-sonnet-4-6");
+    if (parsed.modelSelection?.provider !== "claudeAgent") {
+      throw new Error("Expected claude modelSelection");
+    }
+    expect(parsed.modelSelection.options?.thinking).toBe(true);
+    expect(parsed.modelSelection.options?.effort).toBe("max");
+    expect(parsed.modelSelection.options?.fastMode).toBe(true);
+    expect(parsed.runtimeMode).toBe("full-access");
   });
 });
 
-describe("providerEventSchema", () => {
-  it("accepts notification events with routing metadata", () => {
-    const parsed = providerEventSchema.parse({
-      id: "evt_1",
-      kind: "notification",
-      provider: "codex",
-      sessionId: "sess_1",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      method: "item/agentMessage/delta",
-      threadId: "thr_1",
-      turnId: "turn_1",
-      itemId: "item_1",
-      textDelta: "hi",
+describe("ProviderSendTurnInput", () => {
+  it("accepts codex modelSelection", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.3-codex",
+        options: {
+          reasoningEffort: "xhigh",
+          fastMode: true,
+        },
+      },
     });
-    expect(parsed.method).toBe("item/agentMessage/delta");
+
+    expect(parsed.modelSelection?.provider).toBe("codex");
+    expect(parsed.modelSelection?.model).toBe("gpt-5.3-codex");
+    if (parsed.modelSelection?.provider !== "codex") {
+      throw new Error("Expected codex modelSelection");
+    }
+    expect(parsed.modelSelection.options?.reasoningEffort).toBe("xhigh");
+    expect(parsed.modelSelection.options?.fastMode).toBe(true);
   });
 
-  it("accepts request approval metadata", () => {
-    const parsed = providerEventSchema.parse({
-      id: "evt_2",
-      kind: "request",
-      provider: "codex",
-      sessionId: "sess_1",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      method: "item/commandExecution/requestApproval",
-      requestId: "req_123",
-      requestKind: "command",
+  it("accepts claude modelSelection including ultrathink", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      modelSelection: {
+        provider: "claudeAgent",
+        model: "claude-sonnet-4-6",
+        options: {
+          effort: "ultrathink",
+          fastMode: true,
+        },
+      },
     });
-    expect(parsed.requestId).toBe("req_123");
-    expect(parsed.requestKind).toBe("command");
-  });
-});
 
-describe("providerRespondToRequestInputSchema", () => {
-  it("accepts valid decisions", () => {
-    const parsed = providerRespondToRequestInputSchema.parse({
-      sessionId: "sess_1",
-      requestId: "req_1",
-      decision: "acceptForSession",
-    });
-    expect(parsed.decision).toBe("acceptForSession");
-  });
-
-  it("rejects unknown decisions", () => {
-    expect(() =>
-      providerRespondToRequestInputSchema.parse({
-        sessionId: "sess_1",
-        requestId: "req_1",
-        decision: "always",
-      }),
-    ).toThrow();
+    expect(parsed.modelSelection?.provider).toBe("claudeAgent");
+    if (parsed.modelSelection?.provider !== "claudeAgent") {
+      throw new Error("Expected claude modelSelection");
+    }
+    expect(parsed.modelSelection.options?.effort).toBe("ultrathink");
+    expect(parsed.modelSelection.options?.fastMode).toBe(true);
   });
 });

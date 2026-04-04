@@ -1,7 +1,9 @@
-import type { AgentConfig, AgentExit, OutputChunk } from "./agent";
 import type {
   GitCheckoutInput,
   GitCreateBranchInput,
+  GitPreparePullRequestThreadInput,
+  GitPreparePullRequestThreadResult,
+  GitPullRequestRefInput,
   GitCreateWorktreeInput,
   GitCreateWorktreeResult,
   GitInitInput,
@@ -10,86 +12,132 @@ import type {
   GitPullInput,
   GitPullResult,
   GitRemoveWorktreeInput,
-  GitRunStackedActionInput,
-  GitRunStackedActionResult,
+  GitResolvePullRequestResult,
   GitStatusInput,
   GitStatusResult,
 } from "./git";
 import type {
-  ProviderEvent,
-  ProviderInterruptTurnInput,
-  ProviderRespondToRequestInput,
-  ProviderSendTurnInput,
-  ProviderSession,
-  ProviderSessionStartInput,
-  ProviderStopSessionInput,
-  ProviderTurnStartResult,
-} from "./provider";
-import type {
-  ProjectAddInput,
-  ProjectAddResult,
-  ProjectListResult,
-  ProjectRemoveInput,
+  ProjectSearchEntriesInput,
+  ProjectSearchEntriesResult,
+  ProjectWriteFileInput,
+  ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type {
+  ServerConfig,
+  ServerProviderUpdatedPayload,
+  ServerUpsertKeybindingResult,
+} from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
   TerminalOpenInput,
   TerminalResizeInput,
+  TerminalRestartInput,
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal";
-import type { NewTodoInput, Todo } from "./todo";
+import type { ServerUpsertKeybindingInput } from "./server";
+import type {
+  ClientOrchestrationCommand,
+  OrchestrationGetFullThreadDiffInput,
+  OrchestrationGetFullThreadDiffResult,
+  OrchestrationGetTurnDiffInput,
+  OrchestrationGetTurnDiffResult,
+  OrchestrationEvent,
+  OrchestrationReadModel,
+} from "./orchestration";
+import { EditorId } from "./editor";
+import { ServerSettings, ServerSettingsPatch } from "./settings";
 
-export const EDITORS = [
-  { id: "cursor", label: "Cursor", command: "cursor" },
-  { id: "file-manager", label: "File Manager", command: null },
-] as const;
+export interface ContextMenuItem<T extends string = string> {
+  id: T;
+  label: string;
+  destructive?: boolean;
+  disabled?: boolean;
+}
 
-export type EditorId = (typeof EDITORS)[number]["id"];
+export type DesktopUpdateStatus =
+  | "disabled"
+  | "idle"
+  | "checking"
+  | "up-to-date"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "error";
+
+export type DesktopRuntimeArch = "arm64" | "x64" | "other";
+export type DesktopTheme = "light" | "dark" | "system";
+
+export interface DesktopRuntimeInfo {
+  hostArch: DesktopRuntimeArch;
+  appArch: DesktopRuntimeArch;
+  runningUnderArm64Translation: boolean;
+}
+
+export interface DesktopUpdateState {
+  enabled: boolean;
+  status: DesktopUpdateStatus;
+  currentVersion: string;
+  hostArch: DesktopRuntimeArch;
+  appArch: DesktopRuntimeArch;
+  runningUnderArm64Translation: boolean;
+  availableVersion: string | null;
+  downloadedVersion: string | null;
+  downloadPercent: number | null;
+  checkedAt: string | null;
+  message: string | null;
+  errorContext: "check" | "download" | "install" | null;
+  canRetry: boolean;
+}
+
+export interface DesktopUpdateActionResult {
+  accepted: boolean;
+  completed: boolean;
+  state: DesktopUpdateState;
+}
+
+export interface DesktopUpdateCheckResult {
+  checked: boolean;
+  state: DesktopUpdateState;
+}
+
+export interface DesktopBridge {
+  getWsUrl: () => string | null;
+  pickFolder: () => Promise<string | null>;
+  confirm: (message: string) => Promise<boolean>;
+  setTheme: (theme: DesktopTheme) => Promise<void>;
+  showContextMenu: <T extends string>(
+    items: readonly ContextMenuItem<T>[],
+    position?: { x: number; y: number },
+  ) => Promise<T | null>;
+  openExternal: (url: string) => Promise<boolean>;
+  onMenuAction: (listener: (action: string) => void) => () => void;
+  getUpdateState: () => Promise<DesktopUpdateState>;
+  checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
+  downloadUpdate: () => Promise<DesktopUpdateActionResult>;
+  installUpdate: () => Promise<DesktopUpdateActionResult>;
+  onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+}
 
 export interface NativeApi {
-  todos: {
-    list: () => Promise<Todo[]>;
-    add: (input: NewTodoInput) => Promise<Todo[]>;
-    toggle: (id: string) => Promise<Todo[]>;
-    remove: (id: string) => Promise<Todo[]>;
-  };
   dialogs: {
     pickFolder: () => Promise<string | null>;
     confirm: (message: string) => Promise<boolean>;
   };
   terminal: {
-    open: (input: TerminalOpenInput) => Promise<TerminalSessionSnapshot>;
-    write: (input: TerminalWriteInput) => Promise<void>;
-    resize: (input: TerminalResizeInput) => Promise<void>;
-    clear: (input: TerminalClearInput) => Promise<void>;
-    restart: (input: TerminalOpenInput) => Promise<TerminalSessionSnapshot>;
-    close: (input: TerminalCloseInput) => Promise<void>;
+    open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;
+    write: (input: typeof TerminalWriteInput.Encoded) => Promise<void>;
+    resize: (input: typeof TerminalResizeInput.Encoded) => Promise<void>;
+    clear: (input: typeof TerminalClearInput.Encoded) => Promise<void>;
+    restart: (input: typeof TerminalRestartInput.Encoded) => Promise<TerminalSessionSnapshot>;
+    close: (input: typeof TerminalCloseInput.Encoded) => Promise<void>;
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
-  agent: {
-    spawn: (config: AgentConfig) => Promise<string>;
-    kill: (sessionId: string) => Promise<void>;
-    write: (sessionId: string, data: string) => Promise<void>;
-    onOutput: (callback: (chunk: OutputChunk) => void) => () => void;
-    onExit: (callback: (exit: AgentExit) => void) => () => void;
-  };
-  providers: {
-    startSession: (input: ProviderSessionStartInput) => Promise<ProviderSession>;
-    sendTurn: (input: ProviderSendTurnInput) => Promise<ProviderTurnStartResult>;
-    interruptTurn: (input: ProviderInterruptTurnInput) => Promise<void>;
-    respondToRequest: (input: ProviderRespondToRequestInput) => Promise<void>;
-    stopSession: (input: ProviderStopSessionInput) => Promise<void>;
-    listSessions: () => Promise<ProviderSession[]>;
-    onEvent: (callback: (event: ProviderEvent) => void) => () => void;
-  };
   projects: {
-    list: () => Promise<ProjectListResult>;
-    add: (input: ProjectAddInput) => Promise<ProjectAddResult>;
-    remove: (input: ProjectRemoveInput) => Promise<void>;
+    searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
+    writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
@@ -103,18 +151,35 @@ export interface NativeApi {
     createBranch: (input: GitCreateBranchInput) => Promise<void>;
     checkout: (input: GitCheckoutInput) => Promise<void>;
     init: (input: GitInitInput) => Promise<void>;
+    resolvePullRequest: (input: GitPullRequestRefInput) => Promise<GitResolvePullRequestResult>;
+    preparePullRequestThread: (
+      input: GitPreparePullRequestThreadInput,
+    ) => Promise<GitPreparePullRequestThreadResult>;
     // Stacked action API
     pull: (input: GitPullInput) => Promise<GitPullResult>;
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
-    runStackedAction: (input: GitRunStackedActionInput) => Promise<GitRunStackedActionResult>;
   };
   contextMenu: {
     show: <T extends string>(
-      items: readonly { id: T; label: string }[],
+      items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
     ) => Promise<T | null>;
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    refreshProviders: () => Promise<ServerProviderUpdatedPayload>;
+    upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    getSettings: () => Promise<ServerSettings>;
+    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+  };
+  orchestration: {
+    getSnapshot: () => Promise<OrchestrationReadModel>;
+    dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;
+    getTurnDiff: (input: OrchestrationGetTurnDiffInput) => Promise<OrchestrationGetTurnDiffResult>;
+    getFullThreadDiff: (
+      input: OrchestrationGetFullThreadDiffInput,
+    ) => Promise<OrchestrationGetFullThreadDiffResult>;
+    replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
+    onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
   };
 }

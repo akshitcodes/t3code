@@ -28,17 +28,10 @@ function isLikelyWebProbe(result: WebProbeResult | null): boolean {
     return true;
   }
   const body = result.body.toLowerCase();
-  return (
-    body.includes("<!doctype") ||
-    body.includes("<html") ||
-    body.includes("<head")
-  );
+  return body.includes("<!doctype") || body.includes("<html") || body.includes("<head");
 }
 
-async function probeWebPortOnHost(
-  port: number,
-  host: string,
-): Promise<WebProbeResult | null> {
+async function probeWebPortOnHost(port: number, host: string): Promise<WebProbeResult | null> {
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let settled = false;

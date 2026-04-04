@@ -1,10 +1,14 @@
 "use client";
 
 import { Toast } from "@base-ui/react/toast";
-import { useEffect } from "react";
+import { useEffect, type CSSProperties } from "react";
+import { useParams } from "@tanstack/react-router";
+import { ThreadId } from "@t3tools/contracts";
 import {
+  CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
+  CopyIcon,
   InfoIcon,
   LoaderCircleIcon,
   TriangleAlertIcon,
@@ -12,11 +16,11 @@ import {
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "~/components/ui/button";
-import { useStore } from "~/store";
-import { shouldHideCollapsedToastContent } from "./toast.logic";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { buildVisibleToastLayout, shouldHideCollapsedToastContent } from "./toast.logic";
 
-type ThreadToastData = {
-  threadId?: string | null;
+export type ThreadToastData = {
+  threadId?: ThreadId | null;
   tooltipStyle?: boolean;
   dismissAfterVisibleMs?: number;
 };
@@ -34,6 +38,25 @@ const TOAST_ICONS = {
   warning: TriangleAlertIcon,
 } as const;
 
+function CopyErrorButton({ text }: { text: string }) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard();
+
+  return (
+    <button
+      className="shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground opacity-60 transition-opacity hover:opacity-100"
+      onClick={() => copyToClipboard(text)}
+      title="Copy error"
+      type="button"
+    >
+      {isCopied ? (
+        <CheckIcon className="size-3.5 text-success" />
+      ) : (
+        <CopyIcon className="size-3.5" />
+      )}
+    </button>
+  );
+}
+
 type ToastPosition =
   | "top-left"
   | "top-center"
@@ -48,11 +71,19 @@ interface ToastProviderProps extends Toast.Provider.Props {
 
 function shouldRenderForActiveThread(
   data: ThreadToastData | undefined,
-  activeThreadId: string | null,
+  activeThreadId: ThreadId | null,
 ): boolean {
   const toastThreadId = data?.threadId;
   if (!toastThreadId) return true;
   return toastThreadId === activeThreadId;
+}
+
+function useActiveThreadIdFromRoute(): ThreadId | null {
+  return useParams({
+    strict: false,
+    select: (params) =>
+      typeof params.threadId === "string" ? ThreadId.makeUnsafe(params.threadId) : null,
+  });
 }
 
 function ThreadToastVisibleAutoDismiss({
@@ -143,13 +174,13 @@ function ToastProvider({ children, position = "top-right", ...props }: ToastProv
 }
 
 function Toasts({ position = "top-right" }: { position: ToastPosition }) {
-  const { state } = useStore();
   const { toasts } = Toast.useToastManager<ThreadToastData>();
-  const activeThreadId = state.activeThreadId;
+  const activeThreadId = useActiveThreadIdFromRoute();
   const isTop = position.startsWith("top");
   const visibleToasts = toasts.filter((toast) =>
     shouldRenderForActiveThread(toast.data, activeThreadId),
   );
+  const visibleToastLayout = buildVisibleToastLayout(visibleToasts);
 
   useEffect(() => {
     const activeToastIds = new Set(toasts.map((toast) => toast.id));
@@ -175,12 +206,17 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
         )}
         data-position={position}
         data-slot="toast-viewport"
+        style={
+          {
+            "--toast-frontmost-height": `${visibleToastLayout.frontmostHeight}px`,
+          } as CSSProperties
+        }
       >
-        {visibleToasts.map((toast, visibleIndex) => {
+        {visibleToastLayout.items.map(({ toast, visibleIndex, offsetY }) => {
           const Icon = toast.type ? TOAST_ICONS[toast.type as keyof typeof TOAST_ICONS] : null;
           const hideCollapsedContent = shouldHideCollapsedToastContent(
             visibleIndex,
-            visibleToasts.length,
+            visibleToastLayout.items.length,
           );
 
           return (
@@ -198,7 +234,10 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                 "data-[position*=top]:after:top-full",
                 "data-[position*=bottom]:after:bottom-full",
                 // Define some variables
-                "[--toast-calc-height:var(--toast-frontmost-height,var(--toast-height))] [--toast-gap:--spacing(3)] [--toast-peek:--spacing(3)] [--toast-scale:calc(max(0,1-(var(--toast-index)*.1)))] [--toast-shrink:calc(1-var(--toast-scale))]",
+                // Base UI exposes a shared front-most height for the collapsed stack.
+                // If that shared measurement is briefly stale, long content can render
+                // outside the card until hover expands the toast and swaps to its own height.
+                "[--toast-calc-height:max(var(--toast-frontmost-height,var(--toast-height)),var(--toast-height))] [--toast-gap:--spacing(3)] [--toast-peek:--spacing(3)] [--toast-scale:calc(max(0,1-(var(--toast-index)*.1)))] [--toast-shrink:calc(1-var(--toast-scale))]",
                 // Define offset-y variable
                 "data-[position*=top]:[--toast-calc-offset-y:calc(var(--toast-offset-y)+var(--toast-index)*var(--toast-gap)+var(--toast-swipe-movement-y))]",
                 "data-[position*=bottom]:[--toast-calc-offset-y:calc(var(--toast-offset-y)*-1+var(--toast-index)*var(--toast-gap)*-1+var(--toast-swipe-movement-y))]",
@@ -230,6 +269,12 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
               )}
               data-position={position}
               key={toast.id}
+              style={
+                {
+                  "--toast-index": visibleIndex,
+                  "--toast-offset-y": `${offsetY}px`,
+                } as CSSProperties
+              }
               swipeDirection={
                 position.includes("center")
                   ? [isTop ? "up" : "down"]
@@ -250,7 +295,7 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                     "not-data-expanded:pointer-events-none not-data-expanded:opacity-0",
                 )}
               >
-                <div className="flex gap-2">
+                <div className="flex min-w-0 flex-1 gap-2">
                   {Icon && (
                     <div
                       className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
@@ -260,16 +305,27 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                     </div>
                   )}
 
-                  <div className="flex flex-col gap-0.5">
-                    <Toast.Title className="font-medium" data-slot="toast-title" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="flex items-center justify-between gap-1">
+                      <Toast.Title
+                        className="min-w-0 break-words font-medium"
+                        data-slot="toast-title"
+                      />
+                      {toast.type === "error" && typeof toast.description === "string" && (
+                        <CopyErrorButton text={toast.description} />
+                      )}
+                    </div>
                     <Toast.Description
-                      className="text-muted-foreground"
+                      className="min-w-0 select-text break-words text-muted-foreground"
                       data-slot="toast-description"
                     />
                   </div>
                 </div>
                 {toast.actionProps && (
-                  <Toast.Action className={buttonVariants({ size: "xs" })} data-slot="toast-action">
+                  <Toast.Action
+                    className={cn(buttonVariants({ size: "xs" }), "shrink-0")}
+                    data-slot="toast-action"
+                  >
                     {toast.actionProps.children}
                   </Toast.Action>
                 )}
@@ -292,9 +348,8 @@ function AnchoredToastProvider({ children, ...props }: Toast.Provider.Props) {
 }
 
 function AnchoredToasts() {
-  const { state } = useStore();
   const { toasts } = Toast.useToastManager<ThreadToastData>();
-  const activeThreadId = state.activeThreadId;
+  const activeThreadId = useActiveThreadIdFromRoute();
 
   return (
     <Toast.Portal data-slot="toast-portal-anchored">
@@ -334,7 +389,7 @@ function AnchoredToasts() {
                     </Toast.Content>
                   ) : (
                     <Toast.Content className="pointer-events-auto flex items-center justify-between gap-1.5 overflow-hidden px-3.5 py-3 text-sm">
-                      <div className="flex gap-2">
+                      <div className="flex min-w-0 flex-1 gap-2">
                         {Icon && (
                           <div
                             className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
@@ -344,17 +399,25 @@ function AnchoredToasts() {
                           </div>
                         )}
 
-                        <div className="flex flex-col gap-0.5">
-                          <Toast.Title className="font-medium" data-slot="toast-title" />
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <div className="flex items-center gap-1">
+                            <Toast.Title
+                              className="min-w-0 break-words font-medium"
+                              data-slot="toast-title"
+                            />
+                            {toast.type === "error" && typeof toast.description === "string" && (
+                              <CopyErrorButton text={toast.description} />
+                            )}
+                          </div>
                           <Toast.Description
-                            className="text-muted-foreground"
+                            className="min-w-0 select-text break-words text-muted-foreground"
                             data-slot="toast-description"
                           />
                         </div>
                       </div>
                       {toast.actionProps && (
                         <Toast.Action
-                          className={buttonVariants({ size: "xs" })}
+                          className={cn(buttonVariants({ size: "xs" }), "shrink-0")}
                           data-slot="toast-action"
                         >
                           {toast.actionProps.children}

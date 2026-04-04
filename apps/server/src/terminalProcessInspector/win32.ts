@@ -30,9 +30,7 @@ export async function collectWindowsChildPids(terminalPid: number): Promise<numb
 export async function checkWindowsListeningPorts(processIds: number[]): Promise<number[]> {
   if (processIds.length === 0) return [];
 
-  const processFilter = processIds
-    .map((pid) => `$_.OwningProcess -eq ${pid}`)
-    .join(" -or ");
+  const processFilter = processIds.map((pid) => `$_.OwningProcess -eq ${pid}`).join(" -or ");
   const command = [
     "$connections = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue",
     `$matching = $connections | Where-Object { ${processFilter} }`,

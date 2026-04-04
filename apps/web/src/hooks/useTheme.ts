@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 type Theme = "light" | "dark" | "system";
+type ThemeSnapshot = {
+  theme: Theme;
+  systemDark: boolean;
+};
 
 const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
 let listeners: Array<() => void> = [];
+let lastSnapshot: ThemeSnapshot | null = null;
+let lastDesktopTheme: Theme | null = null;
 function emitChange() {
   for (const listener of listeners) listener();
 }
@@ -26,8 +32,10 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   }
   const isDark = theme === "dark" || (theme === "system" && getSystemDark());
   document.documentElement.classList.toggle("dark", isDark);
+  syncDesktopTheme(theme);
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
+    // oxlint-disable-next-line no-unused-expressions
     document.documentElement.offsetHeight;
     requestAnimationFrame(() => {
       document.documentElement.classList.remove("no-transitions");
@@ -35,11 +43,33 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   }
 }
 
+function syncDesktopTheme(theme: Theme) {
+  const bridge = window.desktopBridge;
+  if (!bridge || lastDesktopTheme === theme) {
+    return;
+  }
+
+  lastDesktopTheme = theme;
+  void bridge.setTheme(theme).catch(() => {
+    if (lastDesktopTheme === theme) {
+      lastDesktopTheme = null;
+    }
+  });
+}
+
 // Apply immediately on module load to prevent flash
 applyTheme(getStored());
 
-function getSnapshot(): Theme {
-  return getStored();
+function getSnapshot(): ThemeSnapshot {
+  const theme = getStored();
+  const systemDark = theme === "system" ? getSystemDark() : false;
+
+  if (lastSnapshot && lastSnapshot.theme === theme && lastSnapshot.systemDark === systemDark) {
+    return lastSnapshot;
+  }
+
+  lastSnapshot = { theme, systemDark };
+  return lastSnapshot;
 }
 
 function subscribe(listener: () => void): () => void {
@@ -70,10 +100,11 @@ function subscribe(listener: () => void): () => void {
 }
 
 export function useTheme() {
-  const theme = useSyncExternalStore(subscribe, getSnapshot);
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot);
+  const theme = snapshot.theme;
 
   const resolvedTheme: "light" | "dark" =
-    theme === "system" ? (getSystemDark() ? "dark" : "light") : theme;
+    theme === "system" ? (snapshot.systemDark ? "dark" : "light") : theme;
 
   const setTheme = useCallback((next: Theme) => {
     localStorage.setItem(STORAGE_KEY, next);

@@ -1,15 +1,18 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { defaultSubprocessInspector } from "./index";
 
+type ListenerProcess = ChildProcessByStdio<null, Readable, Readable>;
+
 interface StartedProcess {
-  process: ChildProcessWithoutNullStreams;
+  process: ListenerProcess;
   port: number;
 }
 
-async function waitForPort(child: ChildProcessWithoutNullStreams): Promise<number> {
+async function waitForPort(child: ListenerProcess): Promise<number> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       cleanup();
@@ -80,7 +83,7 @@ async function startListenerProcess(): Promise<StartedProcess> {
   return { process, port };
 }
 
-async function stopProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
+async function stopProcess(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) {
     return;
   }
@@ -100,7 +103,7 @@ async function stopProcess(child: ChildProcessWithoutNullStreams): Promise<void>
 }
 
 describe("defaultSubprocessInspector", () => {
-  const spawned: ChildProcessWithoutNullStreams[] = [];
+  const spawned: ChildProcess[] = [];
 
   afterEach(async () => {
     await Promise.all(spawned.splice(0, spawned.length).map((child) => stopProcess(child)));
@@ -109,8 +112,12 @@ describe("defaultSubprocessInspector", () => {
   it("detects listening ports when the terminal root PID is the listener", async () => {
     const listener = await startListenerProcess();
     spawned.push(listener.process);
+    const listenerPid = listener.process.pid;
+    if (!listenerPid) {
+      throw new Error("Listener process pid missing");
+    }
 
-    const activity = await defaultSubprocessInspector(listener.process.pid);
+    const activity = await defaultSubprocessInspector(listenerPid);
 
     expect(activity.hasRunningSubprocess).toBe(true);
     expect(activity.runningPorts).toContain(listener.port);
@@ -121,8 +128,12 @@ describe("defaultSubprocessInspector", () => {
       stdio: ["ignore", "ignore", "ignore"],
     });
     spawned.push(idle);
+    const idlePid = idle.pid;
+    if (!idlePid) {
+      throw new Error("Idle process pid missing");
+    }
 
-    const activity = await defaultSubprocessInspector(idle.pid);
+    const activity = await defaultSubprocessInspector(idlePid);
 
     expect(activity.hasRunningSubprocess).toBe(false);
     expect(activity.runningPorts).toEqual([]);

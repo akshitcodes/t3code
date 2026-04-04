@@ -1,60 +1,25 @@
-import { type NativeApi, WS_CHANNELS, WS_METHODS, type WsWelcomePayload } from "@t3tools/contracts";
+import { type ContextMenuItem, type NativeApi } from "@t3tools/contracts";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
-import { WsTransport } from "./wsTransport";
+import { resetServerStateForTests } from "./rpc/serverState";
+import { __resetWsRpcClientForTests, getWsRpcClient } from "./wsRpcClient";
 
-let instance: { api: NativeApi; transport: WsTransport } | null = null;
-const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
-let lastWelcome: WsWelcomePayload | null = null;
+let instance: { api: NativeApi } | null = null;
 
-/**
- * Subscribe to the server welcome message. If a welcome was already received
- * before this call, the listener fires synchronously with the cached payload.
- * This avoids the race between WebSocket connect and React effect registration.
- */
-export function onServerWelcome(listener: (payload: WsWelcomePayload) => void): () => void {
-  welcomeListeners.add(listener);
-
-  // Replay cached welcome for late subscribers
-  if (lastWelcome) {
-    try {
-      listener(lastWelcome);
-    } catch {
-      // Swallow listener errors
-    }
-  }
-
-  return () => {
-    welcomeListeners.delete(listener);
-  };
+export function __resetWsNativeApiForTests() {
+  instance = null;
+  __resetWsRpcClientForTests();
+  resetServerStateForTests();
 }
 
 export function createWsNativeApi(): NativeApi {
-  if (instance) return instance.api;
+  if (instance) {
+    return instance.api;
+  }
 
-  const transport = new WsTransport();
-
-  // Listen for server welcome and forward to registered listeners.
-  // Also cache it so late subscribers (React effects) get it immediately.
-  transport.subscribe(WS_CHANNELS.serverWelcome, (data) => {
-    const payload = data as WsWelcomePayload;
-    lastWelcome = payload;
-    for (const listener of welcomeListeners) {
-      try {
-        listener(payload);
-      } catch {
-        // Swallow listener errors
-      }
-    }
-  });
+  const rpcClient = getWsRpcClient();
 
   const api: NativeApi = {
-    todos: {
-      list: async () => [],
-      add: async () => [],
-      toggle: async () => [],
-      remove: async () => [],
-    },
     dialogs: {
       pickFolder: async () => {
         if (!window.desktopBridge) return null;
@@ -68,40 +33,20 @@ export function createWsNativeApi(): NativeApi {
       },
     },
     terminal: {
-      open: (input) => transport.request(WS_METHODS.terminalOpen, input),
-      write: (input) => transport.request(WS_METHODS.terminalWrite, input),
-      resize: (input) => transport.request(WS_METHODS.terminalResize, input),
-      clear: (input) => transport.request(WS_METHODS.terminalClear, input),
-      restart: (input) => transport.request(WS_METHODS.terminalRestart, input),
-      close: (input) => transport.request(WS_METHODS.terminalClose, input),
-      onEvent: (callback) =>
-        transport.subscribe(WS_CHANNELS.terminalEvent, callback as (data: unknown) => void),
-    },
-    agent: {
-      spawn: async () => "",
-      kill: async () => {},
-      write: async () => {},
-      onOutput: () => () => {},
-      onExit: () => () => {},
-    },
-    providers: {
-      startSession: (input) => transport.request(WS_METHODS.providersStartSession, input),
-      sendTurn: (input) => transport.request(WS_METHODS.providersSendTurn, input),
-      interruptTurn: (input) => transport.request(WS_METHODS.providersInterruptTurn, input),
-      respondToRequest: (input) => transport.request(WS_METHODS.providersRespondToRequest, input),
-      stopSession: (input) => transport.request(WS_METHODS.providersStopSession, input),
-      listSessions: () => transport.request(WS_METHODS.providersListSessions),
-      onEvent: (callback) =>
-        transport.subscribe(WS_CHANNELS.providerEvent, callback as (data: unknown) => void),
+      open: (input) => rpcClient.terminal.open(input as never),
+      write: (input) => rpcClient.terminal.write(input as never),
+      resize: (input) => rpcClient.terminal.resize(input as never),
+      clear: (input) => rpcClient.terminal.clear(input as never),
+      restart: (input) => rpcClient.terminal.restart(input as never),
+      close: (input) => rpcClient.terminal.close(input as never),
+      onEvent: (callback) => rpcClient.terminal.onEvent(callback),
     },
     projects: {
-      list: () => transport.request(WS_METHODS.projectsList),
-      add: (input) => transport.request(WS_METHODS.projectsAdd, input),
-      remove: (input) => transport.request(WS_METHODS.projectsRemove, input),
+      searchEntries: rpcClient.projects.searchEntries,
+      writeFile: rpcClient.projects.writeFile,
     },
     shell: {
-      openInEditor: (cwd, editor) =>
-        transport.request(WS_METHODS.shellOpenInEditor, { cwd, editor }),
+      openInEditor: (cwd, editor) => rpcClient.shell.openInEditor({ cwd, editor }),
       openExternal: async (url) => {
         if (window.desktopBridge) {
           const opened = await window.desktopBridge.openExternal(url);
@@ -111,39 +56,52 @@ export function createWsNativeApi(): NativeApi {
           return;
         }
 
-        const popup = window.open(url, "_blank", "noopener,noreferrer");
-        if (!popup) {
-          throw new Error("Unable to open link. Allow popups and try again.");
-        }
+        window.open(url, "_blank", "noopener,noreferrer");
       },
     },
     git: {
-      pull: (input) => transport.request(WS_METHODS.gitPull, input),
-      status: (input) => transport.request(WS_METHODS.gitStatus, input),
-      runStackedAction: (input) => transport.request(WS_METHODS.gitRunStackedAction, input),
-      listBranches: (input) => transport.request(WS_METHODS.gitListBranches, input),
-      createWorktree: (input) => transport.request(WS_METHODS.gitCreateWorktree, input),
-      removeWorktree: (input) => transport.request(WS_METHODS.gitRemoveWorktree, input),
-      createBranch: (input) => transport.request(WS_METHODS.gitCreateBranch, input),
-      checkout: (input) => transport.request(WS_METHODS.gitCheckout, input),
-      init: (input) => transport.request(WS_METHODS.gitInit, input),
+      pull: rpcClient.git.pull,
+      status: rpcClient.git.status,
+      listBranches: rpcClient.git.listBranches,
+      createWorktree: rpcClient.git.createWorktree,
+      removeWorktree: rpcClient.git.removeWorktree,
+      createBranch: rpcClient.git.createBranch,
+      checkout: rpcClient.git.checkout,
+      init: rpcClient.git.init,
+      resolvePullRequest: rpcClient.git.resolvePullRequest,
+      preparePullRequestThread: rpcClient.git.preparePullRequestThread,
     },
     contextMenu: {
       show: async <T extends string>(
-        items: readonly { id: T; label: string }[],
+        items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
       ): Promise<T | null> => {
         if (window.desktopBridge) {
-          return window.desktopBridge.showContextMenu(items) as Promise<T | null>;
+          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
       },
     },
     server: {
-      getConfig: () => transport.request(WS_METHODS.serverGetConfig),
+      getConfig: rpcClient.server.getConfig,
+      refreshProviders: rpcClient.server.refreshProviders,
+      upsertKeybinding: rpcClient.server.upsertKeybinding,
+      getSettings: rpcClient.server.getSettings,
+      updateSettings: rpcClient.server.updateSettings,
+    },
+    orchestration: {
+      getSnapshot: rpcClient.orchestration.getSnapshot,
+      dispatchCommand: rpcClient.orchestration.dispatchCommand,
+      getTurnDiff: rpcClient.orchestration.getTurnDiff,
+      getFullThreadDiff: rpcClient.orchestration.getFullThreadDiff,
+      replayEvents: (fromSequenceExclusive) =>
+        rpcClient.orchestration
+          .replayEvents({ fromSequenceExclusive })
+          .then((events) => [...events]),
+      onDomainEvent: (callback) => rpcClient.orchestration.onDomainEvent(callback),
     },
   };
 
-  instance = { api, transport };
+  instance = { api };
   return api;
 }

@@ -1,30 +1,55 @@
-import { z } from "zod";
+import { Schema } from "effect";
+import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
 
-export const projectRecordSchema = z.object({
-  id: z.string().min(1),
-  cwd: z.string().min(1),
-  name: z.string().min(1),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
+const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
+
+export const ProjectSearchEntriesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  query: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  limit: PositiveInt.check(Schema.isLessThanOrEqualTo(PROJECT_SEARCH_ENTRIES_MAX_LIMIT)),
 });
+export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
 
-export const projectListResultSchema = z.array(projectRecordSchema);
+const ProjectEntryKind = Schema.Literals(["file", "directory"]);
 
-export const projectAddInputSchema = z.object({
-  cwd: z.string().trim().min(1),
+export const ProjectEntry = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  kind: ProjectEntryKind,
+  parentPath: Schema.optional(TrimmedNonEmptyString),
 });
+export type ProjectEntry = typeof ProjectEntry.Type;
 
-export const projectAddResultSchema = z.object({
-  project: projectRecordSchema,
-  created: z.boolean(),
+export const ProjectSearchEntriesResult = Schema.Struct({
+  entries: Schema.Array(ProjectEntry),
+  truncated: Schema.Boolean,
 });
+export type ProjectSearchEntriesResult = typeof ProjectSearchEntriesResult.Type;
 
-export const projectRemoveInputSchema = z.object({
-  id: z.string().min(1),
+export class ProjectSearchEntriesError extends Schema.TaggedErrorClass<ProjectSearchEntriesError>()(
+  "ProjectSearchEntriesError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export const ProjectWriteFileInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  contents: Schema.String,
 });
+export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
-export type ProjectRecord = z.infer<typeof projectRecordSchema>;
-export type ProjectListResult = z.infer<typeof projectListResultSchema>;
-export type ProjectAddInput = z.input<typeof projectAddInputSchema>;
-export type ProjectAddResult = z.infer<typeof projectAddResultSchema>;
-export type ProjectRemoveInput = z.input<typeof projectRemoveInputSchema>;
+export const ProjectWriteFileResult = Schema.Struct({
+  relativePath: TrimmedNonEmptyString,
+});
+export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
+
+export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteFileError>()(
+  "ProjectWriteFileError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
