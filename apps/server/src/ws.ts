@@ -353,7 +353,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const refreshGitStatus = (cwd: string) =>
       gitStatusBroadcaster
         .refreshStatus(cwd)
-        .pipe(Effect.ignoreCause({ log: true }), Effect.asVoid);
+        .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach(), Effect.asVoid);
 
     return WsRpcGroup.of({
       [ORCHESTRATION_WS_METHODS.getSnapshot]: (_input) =>
@@ -581,9 +581,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       [WS_METHODS.gitPull]: (input) =>
         observeRpcEffect(
           WS_METHODS.gitPull,
-          git
-            .pullCurrentBranch(input.cwd)
-            .pipe(Effect.ensuring(refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true })))),
+          git.pullCurrentBranch(input.cwd).pipe(Effect.ensuring(refreshGitStatus(input.cwd))),
           { "rpc.aggregate": "git" },
         ),
       [WS_METHODS.gitRunStackedAction]: (input) =>
@@ -600,10 +598,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               .pipe(
                 Effect.matchCauseEffect({
                   onFailure: (cause) =>
-                    refreshGitStatus(input.cwd).pipe(
-                      Effect.ignore({ log: true }),
-                      Effect.andThen(Queue.failCause(queue, cause)),
-                    ),
+                    refreshGitStatus(input.cwd).pipe(Effect.andThen(Queue.failCause(queue, cause))),
                   onSuccess: () =>
                     refreshGitStatus(input.cwd).pipe(
                       Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
