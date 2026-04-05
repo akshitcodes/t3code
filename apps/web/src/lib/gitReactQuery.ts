@@ -206,24 +206,6 @@ export function gitRemoveWorktreeMutationOptions(input: { queryClient: QueryClie
     },
   });
 }
-
-export function gitCreateBranchMutationOptions(input: {
-  cwd: string | null;
-  queryClient: QueryClient;
-}) {
-  return mutationOptions({
-    mutationKey: ["git", "mutation", "create-branch", input.cwd] as const,
-    mutationFn: async (branch: string) => {
-      const api = ensureNativeApi();
-      if (!input.cwd) throw new Error("Git branch creation is unavailable.");
-      return api.git.createBranch({ cwd: input.cwd, branch });
-    },
-    onSuccess: async () => {
-      await invalidateGitBranchQueries(input.queryClient, input.cwd);
-    },
-  });
-}
-
 export function gitPreparePullRequestThreadMutationOptions(input: {
   cwd: string | null;
   queryClient: QueryClient;

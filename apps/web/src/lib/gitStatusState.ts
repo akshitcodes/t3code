@@ -90,6 +90,24 @@ export function useGitStatuses(cwds: ReadonlyArray<string>): ReadonlyMap<string,
   );
 
   useEffect(() => {
+    const cwdSet = new Set(cwds);
+
+    setStatusByCwd((current) => {
+      let pruned = false;
+      for (const key of current.keys()) {
+        if (!cwdSet.has(key)) {
+          pruned = true;
+          break;
+        }
+      }
+      if (!pruned) return current;
+      const next = new Map<string, GitStatusResult>();
+      for (const [key, value] of current) {
+        if (cwdSet.has(key)) next.set(key, value);
+      }
+      return next;
+    });
+
     const cleanups = cwds.map((cwd) =>
       appAtomRegistry.subscribe(
         gitStatusStateAtom(cwd),
