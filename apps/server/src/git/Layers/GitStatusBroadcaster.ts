@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 
-import { Duration, Effect, Exit, Layer, PubSub, Ref, Scope, Stream } from "effect";
+import { Duration, Effect, Exit, Fiber, Layer, PubSub, Ref, Scope, Stream } from "effect";
 import type {
   GitStatusInput,
   GitStatusLocalResult,
@@ -57,7 +57,9 @@ export const GitStatusBroadcasterLive = Layer.effect(
       Scope.close(scope, Exit.void),
     );
     const cacheRef = yield* Ref.make(new Map<string, CachedGitStatus>());
-    const pollersRef = yield* Ref.make(new Set<string>());
+    const pollersRef = yield* Ref.make(
+      new Map<string, { fiber: Fiber.Fiber<void, unknown>; subscribers: number }>(),
+    );
 
     const getCachedStatus = Effect.fn("getCachedStatus")(function* (cwd: string) {
       return yield* Ref.get(cacheRef).pipe(Effect.map((cache) => cache.get(cwd) ?? null));
@@ -207,13 +209,13 @@ export const GitStatusBroadcasterLive = Layer.effect(
     const ensureRemotePoller = Effect.fn("ensureRemotePoller")(function* (cwd: string) {
       const normalizedCwd = normalizeCwd(cwd);
       const shouldStart = yield* Ref.modify(pollersRef, (activePollers) => {
-        if (activePollers.has(normalizedCwd)) {
-          return [false, activePollers] as const;
+        const existing = activePollers.get(normalizedCwd);
+        if (existing) {
+          const nextPollers = new Map(activePollers);
+          nextPollers.set(normalizedCwd, { ...existing, subscribers: existing.subscribers + 1 });
+          return [false, nextPollers] as const;
         }
-
-        const nextPollers = new Set(activePollers);
-        nextPollers.add(normalizedCwd);
-        return [true, nextPollers] as const;
+        return [true, activePollers] as const;
       });
 
       if (!shouldStart) {
@@ -238,7 +240,34 @@ export const GitStatusBroadcasterLive = Layer.effect(
         ),
       );
 
-      yield* Effect.forkIn(refreshLoop, broadcasterScope);
+      const fiber = yield* Effect.forkIn(refreshLoop, broadcasterScope);
+      yield* Ref.update(pollersRef, (activePollers) => {
+        const nextPollers = new Map(activePollers);
+        nextPollers.set(normalizedCwd, { fiber, subscribers: 1 });
+        return nextPollers;
+      });
+    });
+
+    const releaseRemotePoller = Effect.fn("releaseRemotePoller")(function* (cwd: string) {
+      const normalizedCwd = normalizeCwd(cwd);
+      const fiberToInterrupt = yield* Ref.modify(pollersRef, (activePollers) => {
+        const existing = activePollers.get(normalizedCwd);
+        if (!existing) {
+          return [null, activePollers] as const;
+        }
+        const nextSubscribers = existing.subscribers - 1;
+        if (nextSubscribers > 0) {
+          const nextPollers = new Map(activePollers);
+          nextPollers.set(normalizedCwd, { ...existing, subscribers: nextSubscribers });
+          return [null, nextPollers] as const;
+        }
+        const nextPollers = new Map(activePollers);
+        nextPollers.delete(normalizedCwd);
+        return [existing.fiber, nextPollers] as const;
+      });
+      if (fiberToInterrupt) {
+        yield* Fiber.interrupt(fiberToInterrupt);
+      }
     });
 
     const streamStatus: GitStatusBroadcasterShape["streamStatus"] = (input) =>
@@ -260,7 +289,7 @@ export const GitStatusBroadcasterLive = Layer.effect(
               Stream.filter((event) => event.cwd === normalizedCwd),
               Stream.map((event) => event.event),
             ),
-          );
+          ).pipe(Stream.ensuring(releaseRemotePoller(normalizedCwd)));
         }),
       );
 
