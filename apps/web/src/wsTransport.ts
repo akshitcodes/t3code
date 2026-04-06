@@ -21,6 +21,7 @@ import {
 interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
   readonly onResubscribe?: () => void;
+  readonly onError?: (error: unknown) => void;
 }
 
 interface RequestOptions {
@@ -147,6 +148,11 @@ export class WsTransport {
           console.warn("WebSocket RPC subscription disconnected", {
             error: formatErrorMessage(error),
           });
+          try {
+            options?.onError?.(error);
+          } catch {
+            // Swallow onError callback errors so the retry loop continues.
+          }
           await sleep(retryDelayMs);
         }
       }

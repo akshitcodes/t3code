@@ -193,6 +193,17 @@ function subscribeToGitStatus(cwd: string): () => void {
       onResubscribe: () => {
         markGitStatusPending(cwd);
       },
+      onError: (error) => {
+        const atom = gitStatusStateAtom(cwd);
+        const current = appAtomRegistry.get(atom);
+        const cause = Cause.fail(error as GitStatusStreamError);
+        appAtomRegistry.set(atom, {
+          data: current.data,
+          error: error as GitStatusStreamError,
+          cause,
+          isPending: false,
+        });
+      },
     },
   );
 }
