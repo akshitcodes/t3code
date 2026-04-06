@@ -11,7 +11,6 @@ export interface GitStatusBroadcasterShape {
   readonly getStatus: (
     input: GitStatusInput,
   ) => Effect.Effect<GitStatusResult, GitManagerServiceError>;
-  readonly enqueueRefreshStatus: (cwd: string) => Effect.Effect<void>;
   readonly refreshStatus: (cwd: string) => Effect.Effect<GitStatusResult, GitManagerServiceError>;
   readonly streamStatus: (
     input: GitStatusInput,

@@ -147,10 +147,19 @@ function ensureGitStatusClient(client: GitStatusClient): void {
 }
 
 function resetLiveGitStatusSubscriptions(): void {
-  for (const watched of watchedGitStatuses.values()) {
+  const previousCwds = new Map<string, number>();
+  for (const [cwd, watched] of watchedGitStatuses) {
+    previousCwds.set(cwd, watched.refCount);
     watched.unsubscribe();
   }
   watchedGitStatuses.clear();
+
+  for (const [cwd, refCount] of previousCwds) {
+    watchedGitStatuses.set(cwd, {
+      refCount,
+      unsubscribe: subscribeToGitStatus(cwd),
+    });
+  }
 }
 
 function unwatchGitStatus(cwd: string): void {

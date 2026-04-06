@@ -18,7 +18,6 @@ import type {
   GitStatusRemoteResult,
   GitStatusStreamEvent,
 } from "@t3tools/contracts";
-import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 
 import {
@@ -203,23 +202,6 @@ export const GitStatusBroadcasterLive = Layer.effect(
       },
     );
 
-    const refreshWorker = yield* makeKeyedCoalescingWorker<string, void, never, never>({
-      merge: () => undefined,
-      process: (cwd) =>
-        refreshStatus(cwd).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("git status refresh failed", {
-              cwd,
-              cause,
-            }),
-          ),
-          Effect.asVoid,
-        ),
-    });
-
-    const enqueueRefreshStatus: GitStatusBroadcasterShape["enqueueRefreshStatus"] = (cwd) =>
-      refreshWorker.enqueue(normalizeCwd(cwd), undefined);
-
     const makeRemoteRefreshLoop = (cwd: string) => {
       const logRefreshFailure = (error: Error) =>
         Effect.logWarning("git remote status refresh failed", {
@@ -240,23 +222,22 @@ export const GitStatusBroadcasterLive = Layer.effect(
     };
 
     const retainRemotePoller = Effect.fn("retainRemotePoller")(function* (cwd: string) {
-      const normalizedCwd = normalizeCwd(cwd);
       yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
-        const existing = activePollers.get(normalizedCwd);
+        const existing = activePollers.get(cwd);
         if (existing) {
           const nextPollers = new Map(activePollers);
-          nextPollers.set(normalizedCwd, {
+          nextPollers.set(cwd, {
             ...existing,
             subscriberCount: existing.subscriberCount + 1,
           });
           return Effect.succeed([undefined, nextPollers] as const);
         }
 
-        return makeRemoteRefreshLoop(normalizedCwd).pipe(
+        return makeRemoteRefreshLoop(cwd).pipe(
           Effect.forkIn(broadcasterScope),
           Effect.map((fiber) => {
             const nextPollers = new Map(activePollers);
-            nextPollers.set(normalizedCwd, {
+            nextPollers.set(cwd, {
               fiber,
               subscriberCount: 1,
             });
@@ -267,16 +248,15 @@ export const GitStatusBroadcasterLive = Layer.effect(
     });
 
     const releaseRemotePoller = Effect.fn("releaseRemotePoller")(function* (cwd: string) {
-      const normalizedCwd = normalizeCwd(cwd);
       const pollerToInterrupt = yield* SynchronizedRef.modify(pollersRef, (activePollers) => {
-        const existing = activePollers.get(normalizedCwd);
+        const existing = activePollers.get(cwd);
         if (!existing) {
           return [null, activePollers] as const;
         }
 
         if (existing.subscriberCount > 1) {
           const nextPollers = new Map(activePollers);
-          nextPollers.set(normalizedCwd, {
+          nextPollers.set(cwd, {
             ...existing,
             subscriberCount: existing.subscriberCount - 1,
           });
@@ -284,7 +264,7 @@ export const GitStatusBroadcasterLive = Layer.effect(
         }
 
         const nextPollers = new Map(activePollers);
-        nextPollers.delete(normalizedCwd);
+        nextPollers.delete(cwd);
         return [existing.fiber, nextPollers] as const;
       });
 
@@ -320,7 +300,6 @@ export const GitStatusBroadcasterLive = Layer.effect(
 
     return {
       getStatus,
-      enqueueRefreshStatus,
       refreshStatus,
       streamStatus,
     } satisfies GitStatusBroadcasterShape;
