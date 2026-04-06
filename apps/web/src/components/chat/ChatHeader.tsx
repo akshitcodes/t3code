@@ -19,8 +19,8 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
-  linkedThreadLabel?: string;
-  linkedThreadTitle?: string;
+  linkedThreadLabel?: string | undefined;
+  linkedThreadTitle?: string | undefined;
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -37,7 +37,7 @@ interface ChatHeaderProps {
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
-  onOpenLinkedThread?: () => void;
+  onOpenLinkedThread?: (() => void) | undefined;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
 }
