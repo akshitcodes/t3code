@@ -41,14 +41,6 @@ export function invalidateGitQueries(queryClient: QueryClient, input?: { cwd?: s
   return queryClient.invalidateQueries({ queryKey: gitQueryKeys.all });
 }
 
-function invalidateGitBranchQueries(queryClient: QueryClient, cwd: string | null) {
-  if (cwd === null) {
-    return Promise.resolve();
-  }
-
-  return queryClient.invalidateQueries({ queryKey: gitQueryKeys.branches(cwd) });
-}
-
 export function gitBranchSearchInfiniteQueryOptions(input: {
   cwd: string | null;
   query: string;
@@ -107,7 +99,7 @@ export function gitInitMutationOptions(input: { cwd: string | null; queryClient:
       return api.git.init({ cwd: input.cwd });
     },
     onSettled: async () => {
-      await invalidateGitBranchQueries(input.queryClient, input.cwd);
+      if (input.cwd) await invalidateGitQueries(input.queryClient, { cwd: input.cwd });
     },
   });
 }
@@ -124,7 +116,7 @@ export function gitCheckoutMutationOptions(input: {
       return api.git.checkout({ cwd: input.cwd, branch });
     },
     onSettled: async () => {
-      await invalidateGitBranchQueries(input.queryClient, input.cwd);
+      if (input.cwd) await invalidateGitQueries(input.queryClient, { cwd: input.cwd });
     },
   });
 }
@@ -164,7 +156,7 @@ export function gitRunStackedActionMutationOptions(input: {
       );
     },
     onSuccess: async () => {
-      await invalidateGitBranchQueries(input.queryClient, input.cwd);
+      if (input.cwd) await invalidateGitQueries(input.queryClient, { cwd: input.cwd });
     },
   });
 }
@@ -178,7 +170,7 @@ export function gitPullMutationOptions(input: { cwd: string | null; queryClient:
       return api.git.pull({ cwd: input.cwd });
     },
     onSuccess: async () => {
-      await invalidateGitBranchQueries(input.queryClient, input.cwd);
+      if (input.cwd) await invalidateGitQueries(input.queryClient, { cwd: input.cwd });
     },
   });
 }
@@ -228,7 +220,7 @@ export function gitPreparePullRequestThreadMutationOptions(input: {
       });
     },
     onSuccess: async () => {
-      await invalidateGitBranchQueries(input.queryClient, input.cwd);
+      if (input.cwd) await invalidateGitQueries(input.queryClient, { cwd: input.cwd });
     },
   });
 }

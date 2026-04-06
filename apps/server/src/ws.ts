@@ -354,7 +354,11 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const refreshGitStatus = (cwd: string) =>
       gitStatusBroadcaster
         .enqueueRefreshStatus(cwd)
-        .pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(wsBackgroundScope), Effect.asVoid);
+        .pipe(
+          Effect.ignoreCause({ log: true }),
+          Effect.forkIn(wsBackgroundScope),
+          Effect.ignore({ log: true }),
+        );
 
     return WsRpcGroup.of({
       [ORCHESTRATION_WS_METHODS.getSnapshot]: (_input) =>
