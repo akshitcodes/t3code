@@ -69,7 +69,7 @@ import {
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
-import { useGitStatus } from "../lib/gitStatusState";
+import { useGitStatusPassive } from "../lib/gitStatusState";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -298,7 +298,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
       selectThreadTerminalState(state.terminalStateByThreadId, props.threadId).runningTerminalIds,
   );
   const gitCwd = thread?.worktreePath ?? props.projectCwd;
-  const gitStatus = useGitStatus(thread?.branch != null ? gitCwd : null);
+  const gitStatus = useGitStatusPassive(thread?.branch != null ? gitCwd : null);
 
   if (!thread) {
     return null;

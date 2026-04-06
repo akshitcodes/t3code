@@ -134,6 +134,16 @@ export function useGitStatus(cwd: string | null): GitStatusState {
   return cwd === null ? EMPTY_GIT_STATUS_STATE : state;
 }
 
+/**
+ * Passively reads the current git status for a cwd without creating a
+ * WebSocket subscription. Use this when you only need to display cached
+ * status data (e.g. sidebar PR badges) without driving server-side polling.
+ */
+export function useGitStatusPassive(cwd: string | null): GitStatusState {
+  const state = useAtomValue(cwd !== null ? gitStatusStateAtom(cwd) : EMPTY_GIT_STATUS_ATOM);
+  return cwd === null ? EMPTY_GIT_STATUS_STATE : state;
+}
+
 function ensureGitStatusClient(client: GitStatusClient): void {
   if (sharedGitStatusClient === client) {
     return;
