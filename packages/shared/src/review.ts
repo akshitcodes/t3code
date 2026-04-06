@@ -221,11 +221,11 @@ export function findPendingPlanReviewRequest(
     const reviewerThreadId = asTrimmedString(payload?.reviewerThreadId);
     const reviewerProvider = parseProviderKind(payload?.reviewerProvider);
     const requestPrompt = asTrimmedString(payload?.requestPrompt);
-    const rootRequestPrompt = asTrimmedString(payload?.rootRequestPrompt) ?? requestPrompt;
     const round = asPositiveInteger(payload?.round) ?? 1;
     if (!sourceThreadId || !reviewerThreadId || !reviewerProvider || !requestPrompt) {
       continue;
     }
+    const rootRequestPrompt = asTrimmedString(payload?.rootRequestPrompt) ?? requestPrompt;
 
     return {
       reviewId,
@@ -270,7 +270,6 @@ export function findLatestActivePlanReview(
     const reviewerThreadId = asTrimmedString(payload?.reviewerThreadId);
     const reviewerProvider = parseProviderKind(payload?.reviewerProvider);
     const requestPrompt = asTrimmedString(payload?.requestPrompt);
-    const rootRequestPrompt = asTrimmedString(payload?.rootRequestPrompt) ?? requestPrompt;
     const round = asPositiveInteger(payload?.round) ?? 1;
     if (
       !reviewId ||
@@ -282,6 +281,7 @@ export function findLatestActivePlanReview(
     ) {
       continue;
     }
+    const rootRequestPrompt = asTrimmedString(payload?.rootRequestPrompt) ?? requestPrompt;
 
     const decisionValue = asTrimmedString(payload?.decision);
     const assistantMessageId = asTrimmedString(payload?.assistantMessageId) ?? undefined;
@@ -292,7 +292,7 @@ export function findLatestActivePlanReview(
       reviewerThreadId: ThreadId.makeUnsafe(reviewerThreadId),
       reviewerProvider,
       requestPrompt,
-      rootRequestPrompt: rootRequestPrompt ?? requestPrompt,
+      rootRequestPrompt,
       round,
       status:
         activity.kind === PLAN_REVIEW_REQUESTED_ACTIVITY_KIND
