@@ -225,6 +225,7 @@ jobs:
 
   publish_cli:
     name: Publish CLI to npm
+    if: github.repository == 'pingdotgg/t3code'
     needs: [preflight, build]
     runs-on: ubuntu-24.04
     steps:
@@ -258,7 +259,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [preflight, build, publish_cli]
+    needs: [preflight, build]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -305,6 +306,7 @@ jobs:
 
   finalize:
     name: Finalize release
+    if: github.repository == 'pingdotgg/t3code'
     needs: [preflight, release]
     runs-on: ubuntu-24.04
     steps:
