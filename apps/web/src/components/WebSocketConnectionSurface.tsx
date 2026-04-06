@@ -54,10 +54,6 @@ function describeExhaustedToast(): string {
   return "Retries exhausted trying to reconnect";
 }
 
-function buildReconnectTitle(_status: WsConnectionStatus): string {
-  return "Disconnected from T3 Server";
-}
-
 function describeRecoveredToast(
   previousDisconnectedAt: string | null,
   connectedAt: string | null,
@@ -270,7 +266,7 @@ export function WebSocketConnectionCoordinator() {
                   ? `Reconnecting... ${formatReconnectAttemptLabel(status)}`
                   : `Reconnecting in ${formatRetryCountdown(status.nextRetryAt, nowMs)}... ${formatReconnectAttemptLabel(status)}`,
               timeout: 0,
-              title: buildReconnectTitle(status),
+              title: "Disconnected from T3 Server",
               type: "loading" as const,
               data: {
                 hideCopyButton: true,

@@ -22,7 +22,7 @@ type ConsumeResult =
       readonly grant: BootstrapGrant;
     };
 
-const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
+const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(10);
 
 export const makeBootstrapCredentialService = Effect.gen(function* () {
   const config = yield* ServerConfig;

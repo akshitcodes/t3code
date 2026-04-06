@@ -108,7 +108,8 @@ const testEnvironmentDescriptor = {
     repositoryIdentity: true,
   },
 };
-let cachedDefaultSessionToken: string | null = null;
+let serverBuildGeneration = 0;
+let cachedDefaultSessionToken: { token: string; generation: number } | null = null;
 
 const makeDefaultOrchestrationReadModel = () => {
   const now = new Date().toISOString();
@@ -293,7 +294,7 @@ const buildAppUnderTest = (options?: {
   };
 }) =>
   Effect.gen(function* () {
-    cachedDefaultSessionToken = null;
+    serverBuildGeneration += 1;
     const fileSystem = yield* FileSystem.FileSystem;
     const tempBaseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-test-" });
     const baseDir = options?.config?.baseDir ?? tempBaseDir;
@@ -521,8 +522,13 @@ const bootstrapBrowserSession = (credential = defaultDesktopBootstrapToken) =>
 
 const getAuthenticatedSessionToken = (credential = defaultDesktopBootstrapToken) =>
   Effect.gen(function* () {
-    if (credential === defaultDesktopBootstrapToken && cachedDefaultSessionToken) {
-      return cachedDefaultSessionToken;
+    const currentGeneration = serverBuildGeneration;
+    if (
+      credential === defaultDesktopBootstrapToken &&
+      cachedDefaultSessionToken &&
+      cachedDefaultSessionToken.generation === currentGeneration
+    ) {
+      return cachedDefaultSessionToken.token;
     }
 
     const { response, body } = yield* bootstrapBrowserSession(credential);
@@ -533,7 +539,7 @@ const getAuthenticatedSessionToken = (credential = defaultDesktopBootstrapToken)
     }
 
     if (credential === defaultDesktopBootstrapToken) {
-      cachedDefaultSessionToken = body.sessionToken;
+      cachedDefaultSessionToken = { token: body.sessionToken, generation: currentGeneration };
     }
 
     return body.sessionToken;
