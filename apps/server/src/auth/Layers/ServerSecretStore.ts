@@ -1,6 +1,6 @@
 import * as Crypto from "node:crypto";
 
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Path, Semaphore } from "effect";
 import * as PlatformError from "effect/PlatformError";
 
 import { ServerConfig } from "../../config.ts";
@@ -60,6 +60,8 @@ export const makeServerSecretStore = Effect.gen(function* () {
     );
   };
 
+  const mutex = yield* Semaphore.make(1);
+
   const getOrCreateRandom: ServerSecretStoreShape["getOrCreateRandom"] = (name, bytes) =>
     get(name).pipe(
       Effect.flatMap((existing) => {
@@ -70,6 +72,7 @@ export const makeServerSecretStore = Effect.gen(function* () {
         const generated = Crypto.randomBytes(bytes);
         return set(name, generated).pipe(Effect.as(Uint8Array.from(generated)));
       }),
+      mutex.withPermits(1),
     );
 
   const remove: ServerSecretStoreShape["remove"] = (name) =>

@@ -56,7 +56,13 @@ export const makeSessionCredentialService = Effect.gen(function* () {
   });
 
   const verify: SessionCredentialServiceShape["verify"] = Effect.fn("verify")(function* (token) {
-    const [encodedPayload, signature] = token.split(".");
+    const parts = token.split(".");
+    if (parts.length !== 2) {
+      return yield* new SessionCredentialError({
+        message: "Malformed session token.",
+      });
+    }
+    const [encodedPayload, signature] = parts;
     if (!encodedPayload || !signature) {
       return yield* new SessionCredentialError({
         message: "Malformed session token.",
