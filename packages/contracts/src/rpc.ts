@@ -28,9 +28,13 @@ import {
 import { KeybindingsConfigError } from "./keybindings";
 import {
   ClientOrchestrationCommand,
+  OrchestrationContinuePlanReviewInput,
+  OrchestrationContinuePlanReviewResult,
   OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
+  OrchestrationFinishPlanReviewInput,
+  OrchestrationFinishPlanReviewResult,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetSnapshotError,
@@ -283,6 +287,24 @@ export const WsOrchestrationStartPlanReviewRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationContinuePlanReviewRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.continuePlanReview,
+  {
+    payload: OrchestrationContinuePlanReviewInput,
+    success: OrchestrationContinuePlanReviewResult,
+    error: OrchestrationDispatchCommandError,
+  },
+);
+
+export const WsOrchestrationFinishPlanReviewRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.finishPlanReview,
+  {
+    payload: OrchestrationFinishPlanReviewInput,
+    success: OrchestrationFinishPlanReviewResult,
+    error: OrchestrationDispatchCommandError,
+  },
+);
+
 export const WsOrchestrationGetTurnDiffRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getTurnDiff, {
   payload: OrchestrationGetTurnDiffInput,
   success: OrchestrationRpcSchemas.getTurnDiff.output,
@@ -365,6 +387,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetSnapshotRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationStartPlanReviewRpc,
+  WsOrchestrationContinuePlanReviewRpc,
+  WsOrchestrationFinishPlanReviewRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationReplayEventsRpc,

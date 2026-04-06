@@ -78,6 +78,8 @@ const rpcClientMock = {
     getSnapshot: vi.fn(),
     dispatchCommand: vi.fn(),
     startPlanReview: vi.fn(),
+    continuePlanReview: vi.fn(),
+    finishPlanReview: vi.fn(),
     getTurnDiff: vi.fn(),
     getFullThreadDiff: vi.fn(),
     replayEvents: vi.fn(),
@@ -299,6 +301,39 @@ describe("wsNativeApi", () => {
     await api.orchestration.startPlanReview(input);
 
     expect(rpcClientMock.orchestration.startPlanReview).toHaveBeenCalledWith(input);
+  });
+
+  it("forwards plan review continuation directly to the RPC client", async () => {
+    rpcClientMock.orchestration.continuePlanReview.mockResolvedValue({
+      sequence: 1,
+      reviewerThreadId: ThreadId.makeUnsafe("thread-review"),
+      reviewerThreadTitle: "Review: Default Thread (Codex)",
+      createdThread: false,
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    const input = {
+      sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+    };
+
+    await api.orchestration.continuePlanReview(input);
+
+    expect(rpcClientMock.orchestration.continuePlanReview).toHaveBeenCalledWith(input);
+  });
+
+  it("forwards plan review finish directly to the RPC client", async () => {
+    rpcClientMock.orchestration.finishPlanReview.mockResolvedValue({ sequence: 1 });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    const input = {
+      sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+    };
+
+    await api.orchestration.finishPlanReview(input);
+
+    expect(rpcClientMock.orchestration.finishPlanReview).toHaveBeenCalledWith(input);
   });
 
   it("forwards workspace file writes to the project RPC", async () => {

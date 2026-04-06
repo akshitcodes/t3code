@@ -95,6 +95,8 @@ export interface WsRpcClient {
     readonly getSnapshot: RpcUnaryNoArgMethod<typeof ORCHESTRATION_WS_METHODS.getSnapshot>;
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
     readonly startPlanReview: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.startPlanReview>;
+    readonly continuePlanReview: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.continuePlanReview>;
+    readonly finishPlanReview: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.finishPlanReview>;
     readonly getTurnDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getTurnDiff>;
     readonly getFullThreadDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getFullThreadDiff>;
     readonly replayEvents: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.replayEvents>;
@@ -214,6 +216,10 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.dispatchCommand](input)),
       startPlanReview: (input) =>
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.startPlanReview](input)),
+      continuePlanReview: (input) =>
+        transport.request((client) => client[ORCHESTRATION_WS_METHODS.continuePlanReview](input)),
+      finishPlanReview: (input) =>
+        transport.request((client) => client[ORCHESTRATION_WS_METHODS.finishPlanReview](input)),
       getTurnDiff: (input) =>
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.getTurnDiff](input)),
       getFullThreadDiff: (input) =>

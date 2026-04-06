@@ -199,7 +199,11 @@ import {
   useServerKeybindings,
 } from "~/rpc/serverState";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
-import { findLinkedPlanReviewThread, providerLabel } from "@t3tools/shared/review";
+import {
+  findLatestActivePlanReview,
+  findLinkedPlanReviewThread,
+  providerLabel,
+} from "@t3tools/shared/review";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -1088,6 +1092,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     )?.linkedThreadId;
     return linkedThreadId ? (threads.find((thread) => thread.id === linkedThreadId) ?? null) : null;
   }, [activeThread, threads]);
+  const activePlanReviewSession = useMemo(
+    () => (activeThread ? findLatestActivePlanReview(activeThread.activities) : null),
+    [activeThread],
+  );
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
@@ -1192,6 +1200,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
     (showPlanFollowUpPrompt && activeProposedPlan !== null);
+  const showPlanReviewLoopActions =
+    linkedReviewThread !== null &&
+    activePlanReviewSession?.status === "completed" &&
+    latestTurnSettled;
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
   const composerFooterActionLayoutKey = useMemo(() => {
     if (activePendingProgress) {
@@ -3545,6 +3557,103 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ],
   );
 
+  const onContinuePlanReview = useCallback(async () => {
+    const api = readNativeApi();
+    if (
+      !api ||
+      !activeThread ||
+      !isServerThread ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
+
+    sendInFlightRef.current = true;
+    beginLocalDispatch({ preparingWorktree: false });
+    setThreadError(activeThread.id, null);
+
+    try {
+      const review = await api.orchestration.continuePlanReview({
+        sourceThreadId: activeThread.id,
+      });
+
+      toastManager.add({
+        type: "success",
+        title: "Review iteration started",
+        description: review.reviewerThreadTitle,
+      });
+    } catch (err) {
+      const message = extractErrorMessage(err, "Failed to continue plan review.");
+      setThreadError(activeThread.id, message);
+      toastManager.add({
+        type: "error",
+        title: "Failed to continue plan review",
+        description: message,
+      });
+    } finally {
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+    }
+  }, [
+    activeThread,
+    beginLocalDispatch,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    resetLocalDispatch,
+    setThreadError,
+  ]);
+
+  const onFinishPlanReview = useCallback(async () => {
+    const api = readNativeApi();
+    if (
+      !api ||
+      !activeThread ||
+      !isServerThread ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
+
+    sendInFlightRef.current = true;
+    beginLocalDispatch({ preparingWorktree: false });
+    setThreadError(activeThread.id, null);
+
+    try {
+      await api.orchestration.finishPlanReview({
+        sourceThreadId: activeThread.id,
+      });
+
+      toastManager.add({
+        type: "success",
+        title: "Review finished",
+      });
+    } catch (err) {
+      const message = extractErrorMessage(err, "Failed to finish plan review.");
+      setThreadError(activeThread.id, message);
+      toastManager.add({
+        type: "error",
+        title: "Failed to finish plan review",
+        description: message,
+      });
+    } finally {
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+    }
+  }, [
+    activeThread,
+    beginLocalDispatch,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    resetLocalDispatch,
+    setThreadError,
+  ]);
+
   const onImplementPlanInNewThread = useCallback(async () => {
     const api = readNativeApi();
     if (
@@ -4127,6 +4236,43 @@ export default function ChatView({ threadId }: ChatViewProps) {
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
+      {showPlanReviewLoopActions && activePlanReviewSession ? (
+        <div className="border-b border-border/70 bg-muted/20 px-3 py-2 sm:px-5">
+          <div className="mx-auto flex w-full max-w-[52rem] items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-foreground">
+                {activePlanReviewSession.decision === "go-forward"
+                  ? "External review says this can likely go forward."
+                  : "External review asked for another revision."}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Round {activePlanReviewSession.round}. You can run one more review iteration or
+                finish this review session.
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void onContinuePlanReview()}
+                disabled={isSendBusy || isConnecting || sendInFlightRef.current}
+              >
+                Do one more iteration
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void onFinishPlanReview()}
+                disabled={isSendBusy || isConnecting || sendInFlightRef.current}
+                variant={activePlanReviewSession.decision === "go-forward" ? "default" : "outline"}
+              >
+                Finish review
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}

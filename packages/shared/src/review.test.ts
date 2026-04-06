@@ -3,12 +3,15 @@ import { EventId } from "@t3tools/contracts";
 
 import {
   buildPlanReviewFeedbackMessage,
+  buildPlanReviewIterationRequestPrompt,
   buildPlanReviewRequestPrompt,
   buildPlanReviewThreadTitle,
+  findLatestActivePlanReview,
   findLinkedPlanReviewThread,
   findPendingPlanReviewRequest,
   parsePlanReviewDecision,
   PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
+  PLAN_REVIEW_FINISHED_ACTIVITY_KIND,
   PLAN_REVIEW_LINK_ACTIVITY_KIND,
   PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
 } from "./review";
@@ -28,6 +31,16 @@ describe("review helpers", () => {
     expect(prompt).toContain("User-provided review payload:");
     expect(prompt).toContain("DECISION: update-plan");
     expect(prompt).toContain("After that, write the rest of the review naturally");
+  });
+
+  it("builds a follow-up review prompt for another iteration", () => {
+    const prompt = buildPlanReviewIterationRequestPrompt({
+      latestSourceResponse: "Updated plan:\n1. Add rollback\n2. Add smoke tests",
+    });
+
+    expect(prompt).toContain("The source agent replied to your review. Review it again.");
+    expect(prompt).toContain("DECISION must be the first line:");
+    expect(prompt).toContain("Source agent reply:");
   });
 
   it("parses the required decision line from a natural review", () => {
@@ -110,6 +123,8 @@ Missing rollback plan.`,
             reviewerThreadId: "thread-review",
             reviewerProvider: "codex",
             requestPrompt: "Review this plan",
+            rootRequestPrompt: "Review this plan",
+            round: 1,
           },
           turnId: null,
           createdAt: "2026-04-06T10:00:00.000Z",
@@ -124,6 +139,96 @@ Missing rollback plan.`,
           },
           turnId: null,
           createdAt: "2026-04-06T10:01:00.000Z",
+        },
+      ]),
+    ).toBeNull();
+  });
+
+  it("finds the latest active review session until it is finished", () => {
+    expect(
+      findLatestActivePlanReview([
+        {
+          id: EventId.makeUnsafe("evt-request"),
+          tone: "info",
+          kind: PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
+          summary: "Review requested",
+          payload: {
+            reviewId: "review-1",
+            sourceThreadId: "thread-source",
+            reviewerThreadId: "thread-review",
+            reviewerProvider: "codex",
+            requestPrompt: "Round 1 payload",
+            rootRequestPrompt: "Original payload",
+            round: 1,
+          },
+          turnId: null,
+          createdAt: "2026-04-06T10:00:00.000Z",
+        },
+        {
+          id: EventId.makeUnsafe("evt-complete"),
+          tone: "info",
+          kind: PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
+          summary: "Review completed",
+          payload: {
+            reviewId: "review-1",
+            sourceThreadId: "thread-source",
+            reviewerThreadId: "thread-review",
+            reviewerProvider: "codex",
+            requestPrompt: "Round 1 payload",
+            rootRequestPrompt: "Original payload",
+            round: 1,
+            decision: "update-plan",
+            assistantMessageId: "msg-review-1",
+          },
+          turnId: null,
+          createdAt: "2026-04-06T10:01:00.000Z",
+        },
+      ]),
+    ).toEqual({
+      reviewId: "review-1",
+      sourceThreadId: "thread-source",
+      reviewerThreadId: "thread-review",
+      reviewerProvider: "codex",
+      requestPrompt: "Round 1 payload",
+      rootRequestPrompt: "Original payload",
+      round: 1,
+      status: "completed",
+      decision: "update-plan",
+      assistantMessageId: "msg-review-1",
+      createdAt: "2026-04-06T10:01:00.000Z",
+    });
+
+    expect(
+      findLatestActivePlanReview([
+        {
+          id: EventId.makeUnsafe("evt-complete"),
+          tone: "info",
+          kind: PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
+          summary: "Review completed",
+          payload: {
+            reviewId: "review-1",
+            sourceThreadId: "thread-source",
+            reviewerThreadId: "thread-review",
+            reviewerProvider: "codex",
+            requestPrompt: "Round 1 payload",
+            rootRequestPrompt: "Original payload",
+            round: 1,
+            decision: "go-forward",
+          },
+          turnId: null,
+          createdAt: "2026-04-06T10:01:00.000Z",
+        },
+        {
+          id: EventId.makeUnsafe("evt-finished"),
+          tone: "info",
+          kind: PLAN_REVIEW_FINISHED_ACTIVITY_KIND,
+          summary: "Review finished",
+          payload: {
+            reviewerThreadId: "thread-review",
+            reviewerProvider: "codex",
+          },
+          turnId: null,
+          createdAt: "2026-04-06T10:02:00.000Z",
         },
       ]),
     ).toBeNull();

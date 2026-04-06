@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  EventId,
   GitCommandError,
   KeybindingRule,
   MessageId,
@@ -1717,6 +1718,170 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(finalCommand.message.text.includes("DECISION: update-plan"), true);
         assert.equal(finalCommand.threadId, result.reviewerThreadId);
       }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("continues plan reviews by sending only the latest source-agent reply", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const sourceTurnId = "turn-source-2";
+      const reviewerThreadId = ThreadId.makeUnsafe("thread-review");
+      const readModel = makeDefaultOrchestrationReadModel();
+      readModel.threads[0] = {
+        ...readModel.threads[0]!,
+        latestTurn: {
+          turnId: sourceTurnId,
+          state: "completed",
+          startedAt: "2026-04-06T10:01:00.000Z",
+          updatedAt: "2026-04-06T10:02:00.000Z",
+          endedAt: "2026-04-06T10:02:00.000Z",
+          providerRequests: [],
+          pendingApprovalRequest: null,
+          pendingUserInputRequest: null,
+          sourceProposedPlanId: null,
+        },
+        messages: [
+          {
+            id: MessageId.makeUnsafe("msg-source-assistant"),
+            role: "assistant",
+            text: "Updated plan:\n1. Add rollback\n2. Add smoke tests",
+            attachments: [],
+            turnId: sourceTurnId,
+            streaming: false,
+            createdAt: "2026-04-06T10:02:00.000Z",
+            updatedAt: "2026-04-06T10:02:00.000Z",
+          },
+        ],
+        activities: [
+          {
+            id: EventId.makeUnsafe("evt-review-complete"),
+            tone: "info",
+            kind: "plan-review.completed",
+            summary: "Codex review received",
+            payload: {
+              reviewId: "review-1",
+              sourceThreadId: defaultThreadId,
+              reviewerThreadId,
+              reviewerProvider: "codex",
+              requestPrompt: "Updated plan:\n1. Add rollback\n2. Add smoke tests",
+              rootRequestPrompt: "Original review payload",
+              round: 1,
+              decision: "update-plan",
+              assistantMessageId: "msg-review-1",
+            },
+            turnId: null,
+            createdAt: "2026-04-06T10:01:00.000Z",
+          },
+        ],
+      };
+      readModel.threads.push({
+        ...readModel.threads[0]!,
+        id: reviewerThreadId,
+        title: "Review: Default Thread (Codex)",
+        activities: [],
+        messages: [],
+        latestTurn: null,
+      });
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+            getReadModel: () => Effect.succeed(readModel),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.continuePlanReview]({
+            sourceThreadId: defaultThreadId,
+          }),
+        ),
+      );
+
+      assert.equal(result.sequence, 3);
+      assert.equal(result.reviewerThreadId, reviewerThreadId);
+      assert.equal(result.createdThread, false);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.activity.append", "thread.activity.append", "thread.turn.start"],
+      );
+      const finalCommand = dispatchedCommands[2];
+      assertTrue(finalCommand?.type === "thread.turn.start");
+      if (finalCommand?.type === "thread.turn.start") {
+        assert.equal(
+          finalCommand.message.text.includes("Updated plan:\n1. Add rollback\n2. Add smoke tests"),
+          true,
+        );
+        assert.equal(finalCommand.message.text.includes("Original review payload"), false);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("finishes active plan reviews by appending finish markers", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const reviewerThreadId = ThreadId.makeUnsafe("thread-review");
+      const readModel = makeDefaultOrchestrationReadModel();
+      readModel.threads[0] = {
+        ...readModel.threads[0]!,
+        activities: [
+          {
+            id: EventId.makeUnsafe("evt-review-complete"),
+            tone: "info",
+            kind: "plan-review.completed",
+            summary: "Codex review received",
+            payload: {
+              reviewId: "review-1",
+              sourceThreadId: defaultThreadId,
+              reviewerThreadId,
+              reviewerProvider: "codex",
+              requestPrompt: "Round 1 reply",
+              rootRequestPrompt: "Original review payload",
+              round: 1,
+              decision: "go-forward",
+            },
+            turnId: null,
+            createdAt: "2026-04-06T10:01:00.000Z",
+          },
+        ],
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+            getReadModel: () => Effect.succeed(readModel),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.finishPlanReview]({
+            sourceThreadId: defaultThreadId,
+          }),
+        ),
+      );
+
+      assert.equal(result.sequence, 1);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.activity.append", "thread.activity.append"],
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

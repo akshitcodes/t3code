@@ -5,6 +5,7 @@ import {
   EventId,
   MessageId,
   type ModelSelection,
+  type OrchestrationThread,
   type ProviderKind,
   type OrchestrationCommand,
   type GitActionProgressEvent,
@@ -27,9 +28,12 @@ import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 import {
+  buildPlanReviewIterationRequestPrompt,
   buildPlanReviewRequestPrompt,
   buildPlanReviewThreadTitle,
+  findLatestActivePlanReview,
   findLinkedPlanReviewThread,
+  PLAN_REVIEW_FINISHED_ACTIVITY_KIND,
   PLAN_REVIEW_LINK_ACTIVITY_KIND,
   PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
   providerLabel,
@@ -144,6 +148,120 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           };
         }),
       );
+
+    const startPlanReviewRound = (input: {
+      readonly sourceThread: OrchestrationThread;
+      readonly reviewerProvider: ProviderKind;
+      readonly reviewerThreadId?: ThreadId;
+      readonly reviewerThreadTitle?: string;
+      readonly requestPrompt: string;
+      readonly rootRequestPrompt: string;
+      readonly round: number;
+      readonly reviewPrompt: string;
+      readonly createdAt: string;
+    }) =>
+      Effect.gen(function* () {
+        const reviewerThread =
+          input.reviewerThreadId === undefined
+            ? null
+            : ((yield* orchestrationEngine.getReadModel()).threads.find(
+                (thread) => thread.id === input.reviewerThreadId,
+              ) ?? null);
+        const reviewerThreadId =
+          reviewerThread?.id ?? input.reviewerThreadId ?? ThreadId.makeUnsafe(crypto.randomUUID());
+        const reviewerThreadTitle =
+          reviewerThread?.title ??
+          input.reviewerThreadTitle ??
+          buildPlanReviewThreadTitle(input.sourceThread.title, input.reviewerProvider);
+        const reviewerModelSelection = yield* resolveReviewerModelSelection(input.reviewerProvider);
+        const reviewPayload = {
+          reviewId: `review:${crypto.randomUUID()}`,
+          sourceThreadId: input.sourceThread.id,
+          reviewerThreadId,
+          reviewerProvider: input.reviewerProvider,
+          requestPrompt: input.requestPrompt,
+          rootRequestPrompt: input.rootRequestPrompt,
+          round: input.round,
+        };
+
+        if (!reviewerThread) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.create",
+            commandId: serverCommandId("plan-review-thread-create"),
+            threadId: reviewerThreadId,
+            projectId: input.sourceThread.projectId,
+            title: reviewerThreadTitle,
+            modelSelection: reviewerModelSelection,
+            runtimeMode: input.sourceThread.runtimeMode,
+            interactionMode: "plan",
+            branch: input.sourceThread.branch,
+            worktreePath: input.sourceThread.worktreePath,
+            createdAt: input.createdAt,
+          });
+
+          yield* appendPlanReviewActivity({
+            threadId: input.sourceThread.id,
+            kind: PLAN_REVIEW_LINK_ACTIVITY_KIND,
+            summary: `Linked ${providerLabel(input.reviewerProvider)} review thread`,
+            payload: {
+              role: "source",
+              linkedThreadId: reviewerThreadId,
+              reviewerProvider: input.reviewerProvider,
+            },
+            createdAt: input.createdAt,
+          });
+          yield* appendPlanReviewActivity({
+            threadId: reviewerThreadId,
+            kind: PLAN_REVIEW_LINK_ACTIVITY_KIND,
+            summary: "Linked review source thread",
+            payload: {
+              role: "reviewer",
+              linkedThreadId: input.sourceThread.id,
+              reviewerProvider: input.reviewerProvider,
+            },
+            createdAt: input.createdAt,
+          });
+        }
+
+        yield* appendPlanReviewActivity({
+          threadId: input.sourceThread.id,
+          kind: PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
+          summary: `${providerLabel(input.reviewerProvider)} review requested`,
+          payload: reviewPayload,
+          createdAt: input.createdAt,
+        });
+        yield* appendPlanReviewActivity({
+          threadId: reviewerThreadId,
+          kind: PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
+          summary: "Plan review requested",
+          payload: reviewPayload,
+          createdAt: input.createdAt,
+        });
+
+        const dispatchResult = yield* orchestrationEngine.dispatch({
+          type: "thread.turn.start",
+          commandId: serverCommandId("plan-review-turn-start"),
+          threadId: reviewerThreadId,
+          message: {
+            messageId: MessageId.makeUnsafe(`plan-review:${crypto.randomUUID()}`),
+            role: "user",
+            text: input.reviewPrompt,
+            attachments: [],
+          },
+          modelSelection: reviewerModelSelection,
+          titleSeed: reviewerThreadTitle,
+          runtimeMode: input.sourceThread.runtimeMode,
+          interactionMode: "plan",
+          createdAt: input.createdAt,
+        });
+
+        return {
+          sequence: dispatchResult.sequence,
+          reviewerThreadId,
+          reviewerThreadTitle,
+          createdThread: reviewerThread === null,
+        } as const;
+      });
 
     const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
       Schema.is(OrchestrationDispatchCommandError)(cause)
@@ -466,111 +584,152 @@ const WsRpcLayer = WsRpcGroup.toLayer(
                   "source",
                   input.reviewerProvider,
                 );
-                const existingReviewerThread =
-                  linkedReviewThread === null
-                    ? null
-                    : (readModel.threads.find(
-                        (thread) => thread.id === linkedReviewThread.linkedThreadId,
-                      ) ?? null);
-                const reviewerThreadId =
-                  existingReviewerThread?.id ?? ThreadId.makeUnsafe(crypto.randomUUID());
-                const reviewerThreadTitle =
-                  existingReviewerThread?.title ??
-                  buildPlanReviewThreadTitle(sourceThread.title, input.reviewerProvider);
-                const reviewerModelSelection = yield* resolveReviewerModelSelection(
-                  input.reviewerProvider,
-                );
-                const reviewPrompt = buildPlanReviewRequestPrompt({ payload: input.payload });
-                const reviewPayload = {
-                  reviewId: `review:${crypto.randomUUID()}`,
-                  sourceThreadId: sourceThread.id,
-                  reviewerThreadId,
+                return yield* startPlanReviewRound({
+                  sourceThread,
                   reviewerProvider: input.reviewerProvider,
+                  reviewerThreadId: linkedReviewThread?.linkedThreadId,
                   requestPrompt: input.payload,
-                };
-
-                if (!existingReviewerThread) {
-                  yield* orchestrationEngine.dispatch({
-                    type: "thread.create",
-                    commandId: serverCommandId("plan-review-thread-create"),
-                    threadId: reviewerThreadId,
-                    projectId: sourceThread.projectId,
-                    title: reviewerThreadTitle,
-                    modelSelection: reviewerModelSelection,
-                    runtimeMode: sourceThread.runtimeMode,
-                    interactionMode: "plan",
-                    branch: sourceThread.branch,
-                    worktreePath: sourceThread.worktreePath,
-                    createdAt,
-                  });
-
-                  yield* appendPlanReviewActivity({
-                    threadId: sourceThread.id,
-                    kind: PLAN_REVIEW_LINK_ACTIVITY_KIND,
-                    summary: `Linked ${providerLabel(input.reviewerProvider)} review thread`,
-                    payload: {
-                      role: "source",
-                      linkedThreadId: reviewerThreadId,
-                      reviewerProvider: input.reviewerProvider,
-                    },
-                    createdAt,
-                  });
-                  yield* appendPlanReviewActivity({
-                    threadId: reviewerThreadId,
-                    kind: PLAN_REVIEW_LINK_ACTIVITY_KIND,
-                    summary: "Linked review source thread",
-                    payload: {
-                      role: "reviewer",
-                      linkedThreadId: sourceThread.id,
-                      reviewerProvider: input.reviewerProvider,
-                    },
-                    createdAt,
-                  });
-                }
-
-                yield* appendPlanReviewActivity({
-                  threadId: sourceThread.id,
-                  kind: PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
-                  summary: `${providerLabel(input.reviewerProvider)} review requested`,
-                  payload: reviewPayload,
+                  rootRequestPrompt: input.payload,
+                  round: 1,
+                  reviewPrompt: buildPlanReviewRequestPrompt({ payload: input.payload }),
                   createdAt,
                 });
-                yield* appendPlanReviewActivity({
-                  threadId: reviewerThreadId,
-                  kind: PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
-                  summary: "Plan review requested",
-                  payload: reviewPayload,
-                  createdAt,
-                });
-
-                const dispatchResult = yield* orchestrationEngine.dispatch({
-                  type: "thread.turn.start",
-                  commandId: serverCommandId("plan-review-turn-start"),
-                  threadId: reviewerThreadId,
-                  message: {
-                    messageId: MessageId.makeUnsafe(`plan-review:${crypto.randomUUID()}`),
-                    role: "user",
-                    text: reviewPrompt,
-                    attachments: [],
-                  },
-                  modelSelection: reviewerModelSelection,
-                  titleSeed: reviewerThreadTitle,
-                  runtimeMode: sourceThread.runtimeMode,
-                  interactionMode: "plan",
-                  createdAt,
-                });
-
-                return {
-                  sequence: dispatchResult.sequence,
-                  reviewerThreadId,
-                  reviewerThreadTitle,
-                  createdThread: existingReviewerThread === null,
-                } as const;
               }),
             )
             .pipe(
               Effect.mapError((cause) =>
                 toDispatchCommandError(cause, "Failed to start plan review"),
+              ),
+            ),
+          { "rpc.aggregate": "orchestration" },
+        ),
+      [ORCHESTRATION_WS_METHODS.continuePlanReview]: (input) =>
+        observeRpcEffect(
+          ORCHESTRATION_WS_METHODS.continuePlanReview,
+          startup
+            .enqueueCommand(
+              Effect.gen(function* () {
+                const createdAt = new Date().toISOString();
+                const readModel = yield* orchestrationEngine.getReadModel();
+                const sourceThread = readModel.threads.find(
+                  (thread) => thread.id === input.sourceThreadId,
+                );
+                if (!sourceThread) {
+                  return yield* new OrchestrationDispatchCommandError({
+                    message: `Source thread '${input.sourceThreadId}' was not found.`,
+                  });
+                }
+
+                const activeReview = findLatestActivePlanReview(sourceThread.activities);
+                if (!activeReview) {
+                  return yield* new OrchestrationDispatchCommandError({
+                    message: "No active plan review session was found for this thread.",
+                  });
+                }
+                if (activeReview.status !== "completed") {
+                  return yield* new OrchestrationDispatchCommandError({
+                    message: "The latest plan review round has not completed yet.",
+                  });
+                }
+
+                const sourceTurnId = sourceThread.latestTurn?.turnId ?? null;
+                const latestAssistantMessage = [...sourceThread.messages]
+                  .toReversed()
+                  .find(
+                    (message) =>
+                      message.role === "assistant" &&
+                      sourceTurnId !== null &&
+                      message.turnId === sourceTurnId,
+                  );
+                if (!latestAssistantMessage?.text.trim()) {
+                  return yield* new OrchestrationDispatchCommandError({
+                    message:
+                      "Could not find the latest source-agent reply to send for another review iteration.",
+                  });
+                }
+
+                return yield* startPlanReviewRound({
+                  sourceThread,
+                  reviewerProvider: activeReview.reviewerProvider,
+                  reviewerThreadId: activeReview.reviewerThreadId,
+                  reviewerThreadTitle: readModel.threads.find(
+                    (thread) => thread.id === activeReview.reviewerThreadId,
+                  )?.title,
+                  requestPrompt: latestAssistantMessage.text,
+                  rootRequestPrompt: activeReview.rootRequestPrompt,
+                  round: activeReview.round + 1,
+                  reviewPrompt: buildPlanReviewIterationRequestPrompt({
+                    latestSourceResponse: latestAssistantMessage.text,
+                    previousDecision: activeReview.decision,
+                  }),
+                  createdAt,
+                });
+              }),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                toDispatchCommandError(cause, "Failed to continue plan review"),
+              ),
+            ),
+          { "rpc.aggregate": "orchestration" },
+        ),
+      [ORCHESTRATION_WS_METHODS.finishPlanReview]: (input) =>
+        observeRpcEffect(
+          ORCHESTRATION_WS_METHODS.finishPlanReview,
+          startup
+            .enqueueCommand(
+              Effect.gen(function* () {
+                const createdAt = new Date().toISOString();
+                const readModel = yield* orchestrationEngine.getReadModel();
+                const sourceThread = readModel.threads.find(
+                  (thread) => thread.id === input.sourceThreadId,
+                );
+                if (!sourceThread) {
+                  return yield* new OrchestrationDispatchCommandError({
+                    message: `Source thread '${input.sourceThreadId}' was not found.`,
+                  });
+                }
+
+                const activeReview = findLatestActivePlanReview(sourceThread.activities);
+                if (!activeReview) {
+                  return yield* new OrchestrationDispatchCommandError({
+                    message: "No active plan review session was found for this thread.",
+                  });
+                }
+
+                const result = yield* appendPlanReviewActivity({
+                  threadId: sourceThread.id,
+                  kind: PLAN_REVIEW_FINISHED_ACTIVITY_KIND,
+                  summary: `${providerLabel(activeReview.reviewerProvider)} review finished`,
+                  payload: {
+                    reviewId: activeReview.reviewId,
+                    sourceThreadId: activeReview.sourceThreadId,
+                    reviewerThreadId: activeReview.reviewerThreadId,
+                    reviewerProvider: activeReview.reviewerProvider,
+                    round: activeReview.round,
+                  },
+                  createdAt,
+                });
+                yield* appendPlanReviewActivity({
+                  threadId: activeReview.reviewerThreadId,
+                  kind: PLAN_REVIEW_FINISHED_ACTIVITY_KIND,
+                  summary: "Review session finished",
+                  payload: {
+                    reviewId: activeReview.reviewId,
+                    sourceThreadId: activeReview.sourceThreadId,
+                    reviewerThreadId: activeReview.reviewerThreadId,
+                    reviewerProvider: activeReview.reviewerProvider,
+                    round: activeReview.round,
+                  },
+                  createdAt,
+                });
+
+                return result;
+              }),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                toDispatchCommandError(cause, "Failed to finish plan review"),
               ),
             ),
           { "rpc.aggregate": "orchestration" },

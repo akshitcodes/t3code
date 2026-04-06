@@ -40,6 +40,10 @@ import type {
 import type { ServerUpsertKeybindingInput } from "./server";
 import type {
   ClientOrchestrationCommand,
+  OrchestrationContinuePlanReviewInput,
+  OrchestrationContinuePlanReviewResult,
+  OrchestrationFinishPlanReviewInput,
+  OrchestrationFinishPlanReviewResult,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
   OrchestrationStartPlanReviewInput,
@@ -180,6 +184,12 @@ export interface NativeApi {
     startPlanReview: (
       input: OrchestrationStartPlanReviewInput,
     ) => Promise<OrchestrationStartPlanReviewResult>;
+    continuePlanReview: (
+      input: OrchestrationContinuePlanReviewInput,
+    ) => Promise<OrchestrationContinuePlanReviewResult>;
+    finishPlanReview: (
+      input: OrchestrationFinishPlanReviewInput,
+    ) => Promise<OrchestrationFinishPlanReviewResult>;
     getTurnDiff: (input: OrchestrationGetTurnDiffInput) => Promise<OrchestrationGetTurnDiffResult>;
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,

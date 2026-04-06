@@ -4,6 +4,7 @@ export const PLAN_REVIEW_LINK_ACTIVITY_KIND = "plan-review.linked";
 export const PLAN_REVIEW_REQUESTED_ACTIVITY_KIND = "plan-review.requested";
 export const PLAN_REVIEW_COMPLETED_ACTIVITY_KIND = "plan-review.completed";
 export const PLAN_REVIEW_FAILED_ACTIVITY_KIND = "plan-review.failed";
+export const PLAN_REVIEW_FINISHED_ACTIVITY_KIND = "plan-review.finished";
 
 export interface LinkedPlanReviewThread {
   readonly role: "source" | "reviewer";
@@ -17,6 +18,22 @@ export interface PendingPlanReviewRequest {
   readonly reviewerThreadId: ThreadId;
   readonly reviewerProvider: ProviderKind;
   readonly requestPrompt: string;
+  readonly rootRequestPrompt: string;
+  readonly round: number;
+  readonly createdAt: string;
+}
+
+export interface ActivePlanReview {
+  readonly reviewId: string;
+  readonly sourceThreadId: ThreadId;
+  readonly reviewerThreadId: ThreadId;
+  readonly reviewerProvider: ProviderKind;
+  readonly requestPrompt: string;
+  readonly rootRequestPrompt: string;
+  readonly round: number;
+  readonly status: "requested" | "completed" | "failed";
+  readonly decision?: "update-plan" | "go-forward";
+  readonly assistantMessageId?: string;
   readonly createdAt: string;
 }
 
@@ -35,6 +52,13 @@ function asTrimmedString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function asPositiveInteger(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    return null;
+  }
+  return value;
 }
 
 function compareActivitiesByOrder(
@@ -87,6 +111,24 @@ export function buildPlanReviewRequestPrompt(input: { readonly payload: string }
     "DECISION: go-forward",
     "",
     "After that, write the rest of the review naturally in your own words.",
+  ].join("\n");
+}
+
+export function buildPlanReviewIterationRequestPrompt(input: {
+  readonly latestSourceResponse: string;
+}): string {
+  return [
+    "The source agent replied to your review. Review it again.",
+    "",
+    "DECISION must be the first line:",
+    "DECISION: update-plan",
+    "or",
+    "DECISION: go-forward",
+    "",
+    "Source agent reply:",
+    "---",
+    input.latestSourceResponse.trim(),
+    "---",
   ].join("\n");
 }
 
@@ -179,6 +221,8 @@ export function findPendingPlanReviewRequest(
     const reviewerThreadId = asTrimmedString(payload?.reviewerThreadId);
     const reviewerProvider = parseProviderKind(payload?.reviewerProvider);
     const requestPrompt = asTrimmedString(payload?.requestPrompt);
+    const rootRequestPrompt = asTrimmedString(payload?.rootRequestPrompt) ?? requestPrompt;
+    const round = asPositiveInteger(payload?.round) ?? 1;
     if (!sourceThreadId || !reviewerThreadId || !reviewerProvider || !requestPrompt) {
       continue;
     }
@@ -189,6 +233,77 @@ export function findPendingPlanReviewRequest(
       reviewerThreadId: ThreadId.makeUnsafe(reviewerThreadId),
       reviewerProvider,
       requestPrompt,
+      rootRequestPrompt,
+      round,
+      createdAt: activity.createdAt,
+    };
+  }
+
+  return null;
+}
+
+export function findLatestActivePlanReview(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ActivePlanReview | null {
+  const ordered = [...activities].toSorted(compareActivitiesByOrder).toReversed();
+  const finishedReviewerThreadIds = new Set<string>();
+
+  for (const activity of ordered) {
+    const payload = asRecord(activity.payload);
+    if (activity.kind === PLAN_REVIEW_FINISHED_ACTIVITY_KIND) {
+      const reviewerThreadId = asTrimmedString(payload?.reviewerThreadId);
+      if (reviewerThreadId) {
+        finishedReviewerThreadIds.add(reviewerThreadId);
+      }
+      continue;
+    }
+    if (
+      activity.kind !== PLAN_REVIEW_REQUESTED_ACTIVITY_KIND &&
+      activity.kind !== PLAN_REVIEW_COMPLETED_ACTIVITY_KIND &&
+      activity.kind !== PLAN_REVIEW_FAILED_ACTIVITY_KIND
+    ) {
+      continue;
+    }
+
+    const reviewId = asTrimmedString(payload?.reviewId);
+    const sourceThreadId = asTrimmedString(payload?.sourceThreadId);
+    const reviewerThreadId = asTrimmedString(payload?.reviewerThreadId);
+    const reviewerProvider = parseProviderKind(payload?.reviewerProvider);
+    const requestPrompt = asTrimmedString(payload?.requestPrompt);
+    const rootRequestPrompt = asTrimmedString(payload?.rootRequestPrompt) ?? requestPrompt;
+    const round = asPositiveInteger(payload?.round) ?? 1;
+    if (
+      !reviewId ||
+      !sourceThreadId ||
+      !reviewerThreadId ||
+      !reviewerProvider ||
+      !requestPrompt ||
+      finishedReviewerThreadIds.has(reviewerThreadId)
+    ) {
+      continue;
+    }
+
+    const decisionValue = asTrimmedString(payload?.decision);
+    const assistantMessageId = asTrimmedString(payload?.assistantMessageId) ?? undefined;
+
+    return {
+      reviewId,
+      sourceThreadId: ThreadId.makeUnsafe(sourceThreadId),
+      reviewerThreadId: ThreadId.makeUnsafe(reviewerThreadId),
+      reviewerProvider,
+      requestPrompt,
+      rootRequestPrompt: rootRequestPrompt ?? requestPrompt,
+      round,
+      status:
+        activity.kind === PLAN_REVIEW_REQUESTED_ACTIVITY_KIND
+          ? "requested"
+          : activity.kind === PLAN_REVIEW_COMPLETED_ACTIVITY_KIND
+            ? "completed"
+            : "failed",
+      ...(decisionValue === "update-plan" || decisionValue === "go-forward"
+        ? { decision: decisionValue }
+        : {}),
+      ...(assistantMessageId ? { assistantMessageId } : {}),
       createdAt: activity.createdAt,
     };
   }
