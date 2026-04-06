@@ -25,7 +25,7 @@ const BootstrapEnvelopeSchema = Schema.Struct({
   t3Home: Schema.optional(Schema.String),
   devUrl: Schema.optional(Schema.URLFromString),
   noBrowser: Schema.optional(Schema.Boolean),
-  authToken: Schema.optional(Schema.String),
+  desktopBootstrapToken: Schema.optional(Schema.String),
   autoBootstrapProjectFromCwd: Schema.optional(Schema.Boolean),
   logWebSocketEvents: Schema.optional(Schema.Boolean),
   otlpTracesUrl: Schema.optional(Schema.String),
@@ -56,11 +56,6 @@ const devUrlFlag = Flag.string("dev-url").pipe(
 );
 const noBrowserFlag = Flag.boolean("no-browser").pipe(
   Flag.withDescription("Disable automatic browser opening."),
-  Flag.optional,
-);
-const authTokenFlag = Flag.string("auth-token").pipe(
-  Flag.withDescription("Auth token required for WebSocket connections."),
-  Flag.withAlias("token"),
   Flag.optional,
 );
 const bootstrapFdFlag = Flag.integer("bootstrap-fd").pipe(
@@ -117,10 +112,6 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  authToken: Config.string("T3CODE_AUTH_TOKEN").pipe(
-    Config.option,
-    Config.map(Option.getOrUndefined),
-  ),
   bootstrapFd: Config.int("T3CODE_BOOTSTRAP_FD").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -143,7 +134,6 @@ interface CliServerFlags {
   readonly cwd: Option.Option<string>;
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
-  readonly authToken: Option.Option<string>;
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
@@ -248,13 +238,9 @@ export const resolveServerConfig = (
         () => mode === "desktop",
       ),
     );
-    const authToken = Option.getOrUndefined(
-      resolveOptionPrecedence(
-        flags.authToken,
-        Option.fromUndefinedOr(env.authToken),
-        Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-          Option.fromUndefinedOr(bootstrap.authToken),
-        ),
+    const desktopBootstrapToken = Option.getOrUndefined(
+      Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+        Option.fromUndefinedOr(bootstrap.desktopBootstrapToken),
       ),
     );
     const autoBootstrapProjectFromCwd = resolveBooleanFlag(
@@ -327,7 +313,7 @@ export const resolveServerConfig = (
       staticDir,
       devUrl,
       noBrowser,
-      authToken,
+      desktopBootstrapToken,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
     };
@@ -348,7 +334,6 @@ const commandFlags = {
   ),
   devUrl: devUrlFlag,
   noBrowser: noBrowserFlag,
-  authToken: authTokenFlag,
   bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,

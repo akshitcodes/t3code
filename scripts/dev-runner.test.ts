@@ -54,7 +54,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,
-          authToken: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -75,7 +74,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           serverOffset: 0,
           webOffset: 0,
           t3Home: "/tmp/custom-t3",
-          authToken: "secret",
           noBrowser: true,
           autoBootstrapProjectFromCwd: false,
           logWebSocketEvents: true,
@@ -105,7 +103,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,
-          authToken: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -127,7 +124,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,
-          authToken: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: false,
@@ -148,7 +144,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           serverOffset: 0,
           webOffset: 0,
           t3Home: "/tmp/my-t3",
-          authToken: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -167,7 +162,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           mode: "dev:desktop",
           baseEnv: {
             T3CODE_PORT: "3773",
-            T3CODE_AUTH_TOKEN: "stale-token",
             T3CODE_MODE: "web",
             T3CODE_NO_BROWSER: "0",
             T3CODE_HOST: "0.0.0.0",
@@ -176,7 +170,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           serverOffset: 0,
           webOffset: 0,
           t3Home: "/tmp/my-t3",
-          authToken: "fresh-token",
           noBrowser: true,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -190,7 +183,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.ELECTRON_RENDERER_PORT, "5733");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:5733");
         assert.equal(env.T3CODE_PORT, undefined);
-        assert.equal(env.T3CODE_AUTH_TOKEN, undefined);
         assert.equal(env.T3CODE_MODE, undefined);
         assert.equal(env.T3CODE_NO_BROWSER, undefined);
         assert.equal(env.T3CODE_HOST, undefined);

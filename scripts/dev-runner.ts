@@ -120,7 +120,6 @@ interface CreateDevRunnerEnvInput {
   readonly serverOffset: number;
   readonly webOffset: number;
   readonly t3Home: string | undefined;
-  readonly authToken: string | undefined;
   readonly noBrowser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -135,7 +134,6 @@ export function createDevRunnerEnv({
   serverOffset,
   webOffset,
   t3Home,
-  authToken,
   noBrowser,
   autoBootstrapProjectFromCwd,
   logWebSocketEvents,
@@ -163,7 +161,6 @@ export function createDevRunnerEnv({
     } else {
       delete output.T3CODE_PORT;
       delete output.VITE_WS_URL;
-      delete output.T3CODE_AUTH_TOKEN;
       delete output.T3CODE_MODE;
       delete output.T3CODE_NO_BROWSER;
       delete output.T3CODE_HOST;
@@ -171,12 +168,6 @@ export function createDevRunnerEnv({
 
     if (!isDesktopMode && host !== undefined) {
       output.T3CODE_HOST = host;
-    }
-
-    if (!isDesktopMode && authToken !== undefined) {
-      output.T3CODE_AUTH_TOKEN = authToken;
-    } else if (!isDesktopMode) {
-      delete output.T3CODE_AUTH_TOKEN;
     }
 
     if (!isDesktopMode && noBrowser !== undefined) {
@@ -350,7 +341,6 @@ export function resolveModePortOffsets<R = NetService>({
 interface DevRunnerCliInput {
   readonly mode: DevMode;
   readonly t3Home: string | undefined;
-  readonly authToken: string | undefined;
   readonly noBrowser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -430,7 +420,6 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       serverOffset,
       webOffset,
       t3Home: input.t3Home,
-      authToken: input.authToken,
       noBrowser: resolveOptionalBooleanOverride(input.noBrowser, envOverrides.noBrowser),
       autoBootstrapProjectFromCwd: resolveOptionalBooleanOverride(
         input.autoBootstrapProjectFromCwd,
@@ -502,11 +491,6 @@ const devRunnerCli = Command.make("dev-runner", {
   t3Home: Flag.string("home-dir").pipe(
     Flag.withDescription("Base directory for all T3 Code data (equivalent to T3CODE_HOME)."),
     Flag.withFallbackConfig(optionalStringConfig("T3CODE_HOME")),
-  ),
-  authToken: Flag.string("auth-token").pipe(
-    Flag.withDescription("Auth token (forwards to T3CODE_AUTH_TOKEN)."),
-    Flag.withAlias("token"),
-    Flag.withFallbackConfig(optionalStringConfig("T3CODE_AUTH_TOKEN")),
   ),
   noBrowser: Flag.boolean("no-browser").pipe(
     Flag.withDescription("Browser auto-open toggle (equivalent to T3CODE_NO_BROWSER)."),

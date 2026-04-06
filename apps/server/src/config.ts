@@ -30,6 +30,7 @@ export interface ServerDerivedPaths {
   readonly providerEventLogPath: string;
   readonly terminalLogsDir: string;
   readonly anonymousIdPath: string;
+  readonly secretsDir: string;
 }
 
 /**
@@ -54,7 +55,7 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly staticDir: string | undefined;
   readonly devUrl: URL | undefined;
   readonly noBrowser: boolean;
-  readonly authToken: string | undefined;
+  readonly desktopBootstrapToken: string | undefined;
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logWebSocketEvents: boolean;
 }
@@ -83,6 +84,7 @@ export const deriveServerPaths = Effect.fn(function* (
     providerEventLogPath: join(providerLogsDir, "events.log"),
     terminalLogsDir: join(logsDir, "terminals"),
     anonymousIdPath: join(stateDir, "anonymous-id"),
+    secretsDir: join(stateDir, "secrets"),
   };
 });
 
@@ -145,7 +147,7 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           logWebSocketEvents: false,
           port: 0,
           host: undefined,
-          authToken: undefined,
+          desktopBootstrapToken: undefined,
           staticDir: undefined,
           devUrl,
           noBrowser: false,

@@ -7,8 +7,8 @@ import {
   Outlet,
   createRootRouteWithContext,
   type ErrorComponentProps,
-  useNavigate,
   useLocation,
+  useNavigate,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
@@ -48,29 +48,37 @@ import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
 import { deriveReplayRetryDecision } from "../orchestrationRecovery";
+import { resolveInitialServerAuthGateState } from "../authBootstrap";
 import { getWsRpcClient } from "~/wsRpcClient";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
+  beforeLoad: async () => ({
+    authGateState: await resolveInitialServerAuthGateState(),
+  }),
   component: RootRouteView,
   errorComponent: RootRouteErrorView,
+  pendingComponent: RootRoutePendingView,
   head: () => ({
     meta: [{ name: "title", content: APP_DISPLAY_NAME }],
   }),
 });
 
 function RootRouteView() {
-  if (!readNativeApi()) {
-    return (
-      <div className="flex h-screen flex-col bg-background text-foreground">
-        <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-muted-foreground">
-            Connecting to {APP_DISPLAY_NAME} server...
-          </p>
-        </div>
-      </div>
-    );
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const { authGateState } = Route.useRouteContext();
+
+  if (!authGateState) {
+    return <RootRoutePendingView />;
+  }
+
+  if (pathname === "/pair") {
+    return <Outlet />;
+  }
+
+  if (authGateState.status !== "authenticated") {
+    return <Outlet />;
   }
 
   return (
@@ -87,6 +95,16 @@ function RootRouteView() {
         </WebSocketConnectionSurface>
       </AnchoredToastProvider>
     </ToastProvider>
+  );
+}
+
+function RootRoutePendingView() {
+  return (
+    <div className="flex h-screen flex-col bg-background text-foreground">
+      <div className="flex flex-1 items-center justify-center">
+        <p className="text-sm text-muted-foreground">Connecting to {APP_DISPLAY_NAME} server...</p>
+      </div>
+    </div>
   );
 }
 

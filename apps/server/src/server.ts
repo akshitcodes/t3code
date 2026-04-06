@@ -50,6 +50,9 @@ import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
 import { ProjectSetupScriptRunnerLive } from "./project/Layers/ProjectSetupScriptRunner";
 import { ObservabilityLive } from "./observability/Layers/Observability";
 import { ServerEnvironmentLive } from "./environment/Layers/ServerEnvironment";
+import { authBootstrapRouteLayer, authSessionRouteLayer } from "./auth/http";
+import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore";
+import { ServerAuthLive } from "./auth/Layers/ServerAuth";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -186,6 +189,8 @@ const WorkspaceLayerLive = Layer.mergeAll(
   ),
 );
 
+const AuthLayerLive = ServerAuthLive.pipe(Layer.provide(ServerSecretStoreLive));
+
 const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
@@ -201,6 +206,7 @@ const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ProjectFaviconResolverLive),
   Layer.provideMerge(RepositoryIdentityResolverLive),
   Layer.provideMerge(ServerEnvironmentLive),
+  Layer.provideMerge(AuthLayerLive),
 
   // Misc.
   Layer.provideMerge(AnalyticsServiceLayerLive),
@@ -213,6 +219,8 @@ const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
 );
 
 export const makeRoutesLayer = Layer.mergeAll(
+  authBootstrapRouteLayer,
+  authSessionRouteLayer,
   attachmentsRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,

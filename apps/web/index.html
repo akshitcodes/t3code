@@ -5,6 +5,106 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script>
+      (() => {
+        try {
+          const storedTheme = window.localStorage.getItem("t3code:theme");
+          const theme =
+            storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
+              ? storedTheme
+              : "system";
+          const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.classList.toggle(
+            "dark",
+            theme === "dark" || (theme === "system" && prefersDark),
+          );
+        } catch {
+          document.documentElement.classList.add("dark");
+        }
+      })();
+    </script>
+    <style>
+      html,
+      body,
+      #root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background: #ffffff;
+        color: #262626;
+        font-family:
+          "DM Sans",
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          system-ui,
+          sans-serif;
+      }
+
+      html.dark body {
+        background: #0a0a0a;
+        color: #f5f5f5;
+      }
+
+      #boot-shell {
+        display: flex;
+        min-height: 100%;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background:
+          radial-gradient(44rem 16rem at top, rgba(59, 130, 246, 0.08), transparent),
+          linear-gradient(145deg, rgba(250, 250, 250, 0.96) 0%, rgba(255, 255, 255, 1) 55%);
+      }
+
+      html.dark #boot-shell {
+        background:
+          radial-gradient(44rem 16rem at top, rgba(59, 130, 246, 0.12), transparent),
+          linear-gradient(145deg, rgba(10, 10, 10, 0.98) 0%, rgba(18, 18, 18, 1) 55%);
+      }
+
+      #boot-shell-card {
+        width: min(100%, 32rem);
+        border-radius: 20px;
+        border: 1px solid rgba(24, 24, 27, 0.08);
+        background: rgba(255, 255, 255, 0.9);
+        padding: 24px;
+        box-shadow: 0 20px 70px rgba(15, 23, 42, 0.12);
+        backdrop-filter: blur(18px);
+      }
+
+      html.dark #boot-shell-card {
+        border-color: rgba(255, 255, 255, 0.08);
+        background: rgba(24, 24, 27, 0.9);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+      }
+
+      #boot-shell-eyebrow {
+        margin: 0;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        opacity: 0.72;
+      }
+
+      #boot-shell-title {
+        margin: 12px 0 0;
+        font-size: clamp(1.5rem, 2vw, 2rem);
+        font-weight: 700;
+        letter-spacing: -0.03em;
+      }
+
+      #boot-shell-copy {
+        margin: 10px 0 0;
+        font-size: 0.92rem;
+        line-height: 1.55;
+        opacity: 0.72;
+      }
+    </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -14,7 +114,17 @@
     <title>T3 Code (Alpha)</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-shell">
+        <section id="boot-shell-card" aria-live="polite">
+          <p id="boot-shell-eyebrow">T3 Code (Alpha)</p>
+          <h1 id="boot-shell-title">Connecting to T3 Server</h1>
+          <p id="boot-shell-copy">
+            Opening the local session and waiting for the app shell to load.
+          </p>
+        </section>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -92,7 +92,8 @@ type LinuxDesktopNamedApp = Electron.App & {
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
-let backendAuthToken = "";
+let backendBootstrapToken = "";
+let backendHttpUrl = "";
 let backendWsUrl = "";
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
@@ -144,7 +145,6 @@ function readPersistedBackendObservabilitySettings(): {
 function backendChildEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.T3CODE_PORT;
-  delete env.T3CODE_AUTH_TOKEN;
   delete env.T3CODE_MODE;
   delete env.T3CODE_NO_BROWSER;
   delete env.T3CODE_HOST;
@@ -197,6 +197,51 @@ function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
   }
 
   return null;
+}
+
+function resolveDesktopBackendHost(): string {
+  if (!isDevelopment) {
+    return "127.0.0.1";
+  }
+
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (!devServerUrl) {
+    return "127.0.0.1";
+  }
+
+  try {
+    const hostname = new URL(devServerUrl).hostname.trim();
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return hostname;
+    }
+  } catch {
+    // Fall through to the default loopback host.
+  }
+
+  return "127.0.0.1";
+}
+
+async function waitForBackendHttpReady(baseUrl: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+
+  for (;;) {
+    try {
+      const response = await fetch(`${baseUrl}/api/auth/session`, {
+        redirect: "manual",
+      });
+      if (response.ok) {
+        return;
+      }
+    } catch {
+      // Retry until the backend becomes reachable or the deadline expires.
+    }
+
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for backend readiness at ${baseUrl}.`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 function writeDesktopStreamChunk(
@@ -1036,7 +1081,8 @@ function startBackend(): void {
         noBrowser: true,
         port: backendPort,
         t3Home: BASE_DIR,
-        authToken: backendAuthToken,
+        host: resolveDesktopBackendHost(),
+        desktopBootstrapToken: backendBootstrapToken,
         ...(backendObservabilitySettings.otlpTracesUrl
           ? { otlpTracesUrl: backendObservabilitySettings.otlpTracesUrl }
           : {}),
@@ -1178,6 +1224,7 @@ function registerIpcHandlers(): void {
     event.returnValue = {
       label: "Local environment",
       wsUrl: backendWsUrl || null,
+      bootstrapToken: backendBootstrapToken || undefined,
     } as const;
   });
 
@@ -1418,7 +1465,7 @@ function createWindow(): BrowserWindow {
     void window.loadURL(process.env.VITE_DEV_SERVER_URL as string);
     window.webContents.openDevTools({ mode: "detach" });
   } else {
-    void window.loadURL(`${DESKTOP_SCHEME}://app/index.html`);
+    void window.loadURL(backendHttpUrl);
   }
 
   window.on("closed", () => {
@@ -1439,21 +1486,24 @@ configureAppIdentity();
 
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");
+  const backendHost = resolveDesktopBackendHost();
   backendPort = await Effect.service(NetService).pipe(
-    Effect.flatMap((net) => net.reserveLoopbackPort()),
+    Effect.flatMap((net) => net.reserveLoopbackPort(backendHost)),
     Effect.provide(NetService.layer),
     Effect.runPromise,
   );
   writeDesktopLogHeader(`reserved backend port via NetService port=${backendPort}`);
-  backendAuthToken = Crypto.randomBytes(24).toString("hex");
-  const baseUrl = `ws://127.0.0.1:${backendPort}`;
-  backendWsUrl = `${baseUrl}/?token=${encodeURIComponent(backendAuthToken)}`;
-  writeDesktopLogHeader(`bootstrap resolved websocket endpoint baseUrl=${baseUrl}`);
+  backendBootstrapToken = Crypto.randomBytes(24).toString("hex");
+  backendHttpUrl = `http://${backendHost}:${backendPort}`;
+  backendWsUrl = `ws://${backendHost}:${backendPort}`;
+  writeDesktopLogHeader(`bootstrap resolved backend endpoint baseUrl=${backendHttpUrl}`);
 
   registerIpcHandlers();
   writeDesktopLogHeader("bootstrap ipc handlers registered");
   startBackend();
   writeDesktopLogHeader("bootstrap backend start requested");
+  await waitForBackendHttpReady(backendHttpUrl);
+  writeDesktopLogHeader("bootstrap backend ready");
   mainWindow = createWindow();
   writeDesktopLogHeader("bootstrap main window created");
 }

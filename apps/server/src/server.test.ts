@@ -86,9 +86,12 @@ import {
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
+import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
+import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 
 const defaultProjectId = ProjectId.makeUnsafe("project-default");
 const defaultThreadId = ThreadId.makeUnsafe("thread-default");
+const defaultDesktopBootstrapToken = "test-desktop-bootstrap-token";
 const defaultModelSelection = {
   provider: "codex",
   model: "gpt-5-codex",
@@ -105,6 +108,7 @@ const testEnvironmentDescriptor = {
     repositoryIdentity: true,
   },
 };
+let cachedDefaultSessionToken: string | null = null;
 
 const makeDefaultOrchestrationReadModel = () => {
   const now = new Date().toISOString();
@@ -163,6 +167,8 @@ const browserOtlpTracingLayer = Layer.mergeAll(
   OtlpSerialization.layerJson,
   Layer.succeed(HttpClient.TracerDisabledWhen, () => true),
 );
+
+const authTestLayer = ServerAuthLive.pipe(Layer.provide(ServerSecretStoreLive));
 
 const makeBrowserOtlpPayload = (spanName: string) =>
   Effect.gen(function* () {
@@ -287,6 +293,7 @@ const buildAppUnderTest = (options?: {
   };
 }) =>
   Effect.gen(function* () {
+    cachedDefaultSessionToken = null;
     const fileSystem = yield* FileSystem.FileSystem;
     const tempBaseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-test-" });
     const baseDir = options?.config?.baseDir ?? tempBaseDir;
@@ -303,7 +310,7 @@ const buildAppUnderTest = (options?: {
       otlpMetricsUrl: undefined,
       otlpExportIntervalMs: 10_000,
       otlpServiceName: "t3-server",
-      mode: "web",
+      mode: "desktop",
       port: 0,
       host: "127.0.0.1",
       cwd: process.cwd(),
@@ -312,7 +319,7 @@ const buildAppUnderTest = (options?: {
       staticDir: undefined,
       devUrl,
       noBrowser: true,
-      authToken: undefined,
+      desktopBootstrapToken: defaultDesktopBootstrapToken,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
       ...options?.config,
@@ -325,6 +332,10 @@ const buildAppUnderTest = (options?: {
     }).pipe(
       Layer.provide(
         Layer.mock(Keybindings)({
+          loadConfigState: Effect.succeed({
+            keybindings: [],
+            issues: [],
+          }),
           streamChanges: Stream.empty,
           ...options?.layers?.keybindings,
         }),
@@ -442,6 +453,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.repositoryIdentityResolver,
         }),
       ),
+      Layer.provideMerge(authTestLayer),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),
@@ -466,6 +478,13 @@ const withWsRpcClient = <A, E, R>(
   f: (client: WsRpcClient) => Effect.Effect<A, E, R>,
 ) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl)));
 
+const appendSessionTokenToUrl = (url: string, sessionToken: string) => {
+  const isAbsoluteUrl = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url);
+  const next = new URL(url, "http://localhost");
+  next.searchParams.set("token", sessionToken);
+  return isAbsoluteUrl ? next.toString() : `${next.pathname}${next.search}${next.hash}`;
+};
+
 const getHttpServerUrl = (pathname = "") =>
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer;
@@ -473,11 +492,68 @@ const getHttpServerUrl = (pathname = "") =>
     return `http://127.0.0.1:${address.port}${pathname}`;
   });
 
-const getWsServerUrl = (pathname = "") =>
+const bootstrapBrowserSession = (credential = defaultDesktopBootstrapToken) =>
+  Effect.gen(function* () {
+    const bootstrapUrl = yield* getHttpServerUrl("/api/auth/bootstrap");
+    const response = yield* Effect.promise(() =>
+      fetch(bootstrapUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          credential,
+        }),
+      }),
+    );
+    const body = (yield* Effect.promise(() => response.json())) as {
+      readonly authenticated: boolean;
+      readonly sessionMethod: string;
+      readonly sessionToken: string;
+      readonly expiresAt: string;
+    };
+    return {
+      response,
+      body,
+      cookie: response.headers.get("set-cookie"),
+    };
+  });
+
+const getAuthenticatedSessionToken = (credential = defaultDesktopBootstrapToken) =>
+  Effect.gen(function* () {
+    if (credential === defaultDesktopBootstrapToken && cachedDefaultSessionToken) {
+      return cachedDefaultSessionToken;
+    }
+
+    const { response, body } = yield* bootstrapBrowserSession(credential);
+    if (!response.ok) {
+      return yield* Effect.fail(
+        new Error(`Expected bootstrap session response to succeed, got ${response.status}`),
+      );
+    }
+
+    if (credential === defaultDesktopBootstrapToken) {
+      cachedDefaultSessionToken = body.sessionToken;
+    }
+
+    return body.sessionToken;
+  });
+
+const getWsServerUrl = (
+  pathname = "",
+  options?: { authenticated?: boolean; sessionToken?: string; credential?: string },
+) =>
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer;
     const address = server.address as HttpServer.TcpAddress;
-    return `ws://127.0.0.1:${address.port}${pathname}`;
+    const baseUrl = `ws://127.0.0.1:${address.port}${pathname}`;
+    if (options?.authenticated === false) {
+      return baseUrl;
+    }
+    return appendSessionTokenToUrl(
+      baseUrl,
+      options?.sessionToken ?? (yield* getAuthenticatedSessionToken(options?.credential)),
+    );
   });
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
@@ -528,7 +604,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       const response = yield* HttpClient.get(
-        `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}`,
+        appendSessionTokenToUrl(
+          `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}`,
+          yield* getAuthenticatedSessionToken(),
+        ),
       );
 
       assert.equal(response.status, 200);
@@ -548,11 +627,113 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       const response = yield* HttpClient.get(
-        `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}`,
+        appendSessionTokenToUrl(
+          `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}`,
+          yield* getAuthenticatedSessionToken(),
+        ),
       );
 
       assert.equal(response.status, 200);
       assert.include(yield* response.text, 'data-fallback="project-favicon"');
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("reports unauthenticated session state without requiring auth", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const url = yield* getHttpServerUrl("/api/auth/session");
+      const response = yield* Effect.promise(() => fetch(url));
+      const body = (yield* Effect.promise(() => response.json())) as {
+        readonly authenticated: boolean;
+        readonly auth: {
+          readonly policy: string;
+          readonly bootstrapMethods: ReadonlyArray<string>;
+          readonly sessionMethods: ReadonlyArray<string>;
+          readonly sessionCookieName: string;
+        };
+      };
+
+      assert.equal(response.status, 200);
+      assert.equal(body.authenticated, false);
+      assert.equal(body.auth.policy, "desktop-managed-local");
+      assert.deepEqual(body.auth.bootstrapMethods, ["desktop-bootstrap"]);
+      assert.deepEqual(body.auth.sessionMethods, [
+        "browser-session-cookie",
+        "bearer-session-token",
+      ]);
+      assert.equal(body.auth.sessionCookieName, "t3_session");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("bootstraps a browser session and authenticates the session endpoint via cookie", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const {
+        response: bootstrapResponse,
+        body: bootstrapBody,
+        cookie: setCookie,
+      } = yield* bootstrapBrowserSession();
+
+      assert.equal(bootstrapResponse.status, 200);
+      assert.equal(bootstrapBody.authenticated, true);
+      assert.equal(bootstrapBody.sessionMethod, "browser-session-cookie");
+      assert.isDefined(setCookie);
+
+      const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+      const sessionResponse = yield* Effect.promise(() =>
+        fetch(sessionUrl, {
+          headers: {
+            cookie: setCookie?.split(";")[0] ?? "",
+          },
+        }),
+      );
+      const sessionBody = (yield* Effect.promise(() => sessionResponse.json())) as {
+        readonly authenticated: boolean;
+        readonly sessionMethod?: string;
+      };
+
+      assert.equal(sessionResponse.status, 200);
+      assert.equal(sessionBody.authenticated, true);
+      assert.equal(sessionBody.sessionMethod, "browser-session-cookie");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects reusing the same bootstrap credential after it has been exchanged", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const first = yield* bootstrapBrowserSession();
+      const second = yield* bootstrapBrowserSession();
+
+      assert.equal(first.response.status, 200);
+      assert.equal(second.response.status, 401);
+      assert.equal(
+        (second.body as { readonly error?: string }).error,
+        "Invalid bootstrap credential.",
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("accepts websocket rpc handshake with a bootstrapped session token", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { response: bootstrapResponse, body: bootstrapBody } = yield* bootstrapBrowserSession();
+
+      assert.equal(bootstrapResponse.status, 200);
+
+      const wsUrl = appendSessionTokenToUrl(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        bootstrapBody.sessionToken,
+      );
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetConfig]({})),
+      );
+
+      assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
+      assert.equal(response.auth.policy, "desktop-managed-local");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -572,7 +753,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true });
       yield* fileSystem.writeFileString(attachmentPath, "attachment-ok");
 
-      const response = yield* HttpClient.get(`/attachments/${attachmentId}`);
+      const response = yield* HttpClient.get(
+        appendSessionTokenToUrl(
+          `/attachments/${attachmentId}`,
+          yield* getAuthenticatedSessionToken(),
+        ),
+      );
       assert.equal(response.status, 200);
       assert.equal(yield* response.text, "attachment-ok");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -594,7 +780,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* fileSystem.writeFileString(attachmentPath, "attachment-encoded-ok");
 
       const response = yield* HttpClient.get(
-        "/attachments/thread%20folder/message%20folder/file%20name.png",
+        appendSessionTokenToUrl(
+          "/attachments/thread%20folder/message%20folder/file%20name.png",
+          yield* getAuthenticatedSessionToken(),
+        ),
       );
       assert.equal(response.status, 200);
       assert.equal(yield* response.text, "attachment-encoded-ok");
@@ -731,6 +920,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const response = yield* HttpClient.post("/api/observability/v1/traces", {
         headers: {
+          authorization: `Bearer ${yield* getAuthenticatedSessionToken()}`,
           "content-type": "application/json",
           origin: "http://localhost:5733",
         },
@@ -839,6 +1029,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
         const response = yield* HttpClient.post("/api/observability/v1/traces", {
           headers: {
+            authorization: `Bearer ${yield* getAuthenticatedSessionToken()}`,
             "content-type": "application/json",
           },
           body: HttpBody.text(JSON.stringify(payload), "application/json"),
@@ -885,7 +1076,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest();
 
       const response = yield* HttpClient.get(
-        "/attachments/missing-11111111-1111-4111-8111-111111111111",
+        appendSessionTokenToUrl(
+          "/attachments/missing-11111111-1111-4111-8111-111111111111",
+          yield* getAuthenticatedSessionToken(),
+        ),
       );
       assert.equal(response.status, 404);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -927,7 +1121,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects websocket rpc handshake when auth token is missing", () =>
+  it.effect("rejects websocket rpc handshake when session authentication is missing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -937,13 +1131,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "export const needle = 1;",
       );
 
-      yield* buildAppUnderTest({
-        config: {
-          authToken: "secret-token",
-        },
-      });
+      yield* buildAppUnderTest();
 
-      const wsUrl = yield* getWsServerUrl("/ws");
+      const wsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
       const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.projectsSearchEntries]({
@@ -956,38 +1146,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assertTrue(result._tag === "Failure");
       assertInclude(String(result.failure), "SocketOpenError");
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("accepts websocket rpc handshake when auth token is provided", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-auth-ok-" });
-      yield* fs.writeFileString(
-        path.join(workspaceDir, "needle-file.ts"),
-        "export const needle = 1;",
-      );
-
-      yield* buildAppUnderTest({
-        config: {
-          authToken: "secret-token",
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws?token=secret-token");
-      const response = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.projectsSearchEntries]({
-            cwd: workspaceDir,
-            query: "needle",
-            limit: 10,
-          }),
-        ),
-      );
-
-      assert.isAtLeast(response.entries.length, 1);
-      assert.equal(response.truncated, false);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

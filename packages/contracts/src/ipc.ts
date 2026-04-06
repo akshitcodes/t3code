@@ -106,6 +106,7 @@ export interface DesktopUpdateCheckResult {
 export interface DesktopEnvironmentBootstrap {
   label: string;
   wsUrl: string | null;
+  bootstrapToken?: string;
 }
 
 export interface DesktopBridge {

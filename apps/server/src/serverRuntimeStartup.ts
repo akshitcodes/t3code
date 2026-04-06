@@ -29,6 +29,7 @@ import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerSettingsService } from "./serverSettings";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+import { ServerAuth } from "./auth/Services/ServerAuth";
 
 const isWildcardHost = (host: string | undefined): boolean =>
   host === "0.0.0.0" || host === "::" || host === "[::]";
@@ -229,18 +230,29 @@ const autoBootstrapWelcome = Effect.gen(function* () {
   } as const;
 });
 
+const resolveStartupBrowserTarget = Effect.gen(function* () {
+  const serverConfig = yield* ServerConfig;
+  const serverAuth = yield* ServerAuth;
+  const localUrl = `http://localhost:${serverConfig.port}`;
+  const bindUrl =
+    serverConfig.host && !isWildcardHost(serverConfig.host)
+      ? `http://${formatHostForUrl(serverConfig.host)}:${serverConfig.port}`
+      : localUrl;
+  const baseTarget = serverConfig.devUrl?.toString() ?? bindUrl;
+  return yield* Effect.succeed(serverConfig.mode === "desktop" ? baseTarget : undefined).pipe(
+    Effect.flatMap((target) =>
+      target ? Effect.succeed(target) : serverAuth.issueStartupPairingUrl(baseTarget),
+    ),
+  );
+});
+
 const maybeOpenBrowser = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   if (serverConfig.noBrowser) {
     return;
   }
   const { openBrowser } = yield* Open;
-  const localUrl = `http://localhost:${serverConfig.port}`;
-  const bindUrl =
-    serverConfig.host && !isWildcardHost(serverConfig.host)
-      ? `http://${formatHostForUrl(serverConfig.host)}:${serverConfig.port}`
-      : localUrl;
-  const target = serverConfig.devUrl?.toString() ?? bindUrl;
+  const target = yield* resolveStartupBrowserTarget;
 
   yield* openBrowser(target).pipe(
     Effect.catch(() =>
@@ -371,6 +383,12 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
       yield* Effect.logDebug("startup phase: recording startup heartbeat");
       yield* launchStartupHeartbeat;
       yield* Effect.logDebug("startup phase: browser open check");
+      if (serverConfig.mode !== "desktop") {
+        const pairingUrl = yield* resolveStartupBrowserTarget;
+        yield* Effect.logInfo("Authentication required. Open T3 Code using the pairing URL.", {
+          pairingUrl,
+        });
+      }
       yield* runStartupPhase("browser.open", maybeOpenBrowser);
       yield* Effect.logDebug("startup phase: complete");
     }),

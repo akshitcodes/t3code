@@ -1,4 +1,4 @@
-import { Cause, Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
+import { Cause, Effect, Layer, Queue, Ref, Schema, Stream } from "effect";
 import {
   CommandId,
   EventId,
@@ -20,7 +20,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { clamp } from "effect/Number";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
@@ -48,6 +48,8 @@ import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePat
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner";
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment";
+import { ServerAuth } from "./auth/Services/ServerAuth";
+import { toUnauthorizedResponse } from "./auth/http";
 
 const WsRpcLayer = WsRpcGroup.toLayer(
   Effect.gen(function* () {
@@ -69,6 +71,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
     const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
     const serverEnvironment = yield* ServerEnvironment;
+    const serverAuth = yield* ServerAuth;
 
     const serverCommandId = (tag: string) =>
       CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
@@ -376,9 +379,11 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       const providers = yield* providerRegistry.getProviders;
       const settings = yield* serverSettings.getSettings;
       const environment = yield* serverEnvironment.getDescriptor;
+      const auth = yield* serverAuth.getDescriptor();
 
       return {
         environment,
+        auth,
         cwd: config.cwd,
         keybindingsConfigPath: config.keybindingsConfigPath,
         keybindings: keybindingsConfig.keybindings,
@@ -787,19 +792,12 @@ export const websocketRpcRouteLayer = Layer.unwrap(
       "/ws",
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const config = yield* ServerConfig;
-        if (config.authToken) {
-          const url = HttpServerRequest.toURL(request);
-          if (Option.isNone(url)) {
-            return HttpServerResponse.text("Invalid WebSocket URL", { status: 400 });
-          }
-          const token = url.value.searchParams.get("token");
-          if (token !== config.authToken) {
-            return HttpServerResponse.text("Unauthorized WebSocket connection", { status: 401 });
-          }
-        }
+        const serverAuth = yield* ServerAuth;
+        yield* serverAuth.authenticateWebSocketUpgrade(request);
         return yield* rpcWebSocketHttpEffect;
-      }),
+      }).pipe(
+        Effect.catchTag("AuthError", (error) => Effect.succeed(toUnauthorizedResponse(error))),
+      ),
     );
   }),
 );
