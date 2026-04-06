@@ -37,6 +37,7 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  parseStandaloneComposerReviewCommand,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "../composer-logic";
@@ -198,6 +199,7 @@ import {
   useServerKeybindings,
 } from "~/rpc/serverState";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
+import { findLinkedPlanReviewThread, providerLabel } from "@t3tools/shared/review";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -207,6 +209,39 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+
+function extractErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    for (const key of ["message", "detail", "error"]) {
+      const value = record[key];
+      if (typeof value === "string" && value.trim().length > 0) {
+        return value;
+      }
+    }
+    if ("cause" in record) {
+      const nested = extractErrorMessage(record.cause, "");
+      if (nested.trim().length > 0) {
+        return nested;
+      }
+    }
+    try {
+      const serialized = JSON.stringify(error);
+      if (serialized && serialized !== "{}") {
+        return serialized;
+      }
+    } catch {
+      // Fall through to the fallback message.
+    }
+  }
+  return fallback;
+}
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
 
@@ -296,6 +331,7 @@ function formatOutgoingPrompt(params: {
   }
   return params.text;
 }
+
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
@@ -1032,6 +1068,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const selectedModelForPicker = selectedModel;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const linkedReviewThread = useMemo(() => {
+    if (!activeThread) {
+      return null;
+    }
+    const linkedThreadId = findLinkedPlanReviewThread(
+      activeThread.activities,
+      "source",
+    )?.linkedThreadId;
+    return linkedThreadId ? (threads.find((thread) => thread.id === linkedThreadId) ?? null) : null;
+  }, [activeThread, threads]);
+  const linkedSourceThread = useMemo(() => {
+    if (!activeThread) {
+      return null;
+    }
+    const linkedThreadId = findLinkedPlanReviewThread(
+      activeThread.activities,
+      "reviewer",
+    )?.linkedThreadId;
+    return linkedThreadId ? (threads.find((thread) => thread.id === linkedThreadId) ?? null) : null;
+  }, [activeThread, threads]);
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
@@ -1477,6 +1533,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
           command: "default",
           label: "/default",
           description: "Switch this thread back to normal chat mode",
+        },
+        {
+          id: "slash:review",
+          type: "slash-command",
+          command: "review",
+          label: "/review",
+          description: "Send an explicit review payload to a linked reviewer thread",
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const query = composerTrigger.query.trim().toLowerCase();
@@ -2865,6 +2928,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
       imageCount: composerImages.length,
       terminalContexts: composerTerminalContexts,
     });
+    const standaloneReviewCommand =
+      composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
+        ? parseStandaloneComposerReviewCommand(trimmed)
+        : null;
+    if (standaloneReviewCommand) {
+      promptRef.current = "";
+      clearComposerDraftContent(activeThread.id);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      await onRequestPlanReview(standaloneReviewCommand);
+      return;
+    }
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -3415,6 +3491,60 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ],
   );
 
+  const onRequestPlanReview = useCallback(
+    async (input: { reviewerProvider: ProviderKind; payload: string }) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      setThreadError(activeThread.id, null);
+
+      try {
+        const review = await api.orchestration.startPlanReview({
+          sourceThreadId: activeThread.id,
+          reviewerProvider: input.reviewerProvider,
+          payload: input.payload,
+        });
+
+        toastManager.add({
+          type: "success",
+          title: `${providerLabel(input.reviewerProvider)} review started`,
+          description: review.reviewerThreadTitle,
+        });
+      } catch (err) {
+        const message = extractErrorMessage(err, "Failed to start plan review.");
+        setThreadError(activeThread.id, message);
+        toastManager.add({
+          type: "error",
+          title: "Failed to start plan review",
+          description: message,
+        });
+      } finally {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+      }
+    },
+    [
+      activeThread,
+      beginLocalDispatch,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      resetLocalDispatch,
+      setThreadError,
+    ],
+  );
+
   const onImplementPlanInNewThread = useCallback(async () => {
     const api = readNativeApi();
     if (
@@ -3729,6 +3859,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
           return;
         }
+        if (item.command === "review") {
+          const replacement = "/review --codex ";
+          const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+            snapshot.value,
+            trigger.rangeEnd,
+            replacement,
+          );
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            replacementRangeEnd,
+            replacement,
+            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          );
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
         void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -3931,6 +4079,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          linkedThreadLabel={
+            linkedReviewThread
+              ? `Review: ${linkedReviewThread.title}`
+              : linkedSourceThread
+                ? `Reviewing: ${linkedSourceThread.title}`
+                : undefined
+          }
+          linkedThreadTitle={linkedReviewThread?.title ?? linkedSourceThread?.title}
           isGitRepo={isGitRepo}
           openInCwd={gitCwd}
           activeProjectScripts={activeProject?.scripts}
@@ -3951,6 +4107,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
+          onOpenLinkedThread={
+            linkedReviewThread || linkedSourceThread
+              ? () =>
+                  void navigate({
+                    to: "/$threadId",
+                    params: { threadId: linkedReviewThread?.id ?? linkedSourceThread!.id },
+                  })
+              : undefined
+          }
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
         />

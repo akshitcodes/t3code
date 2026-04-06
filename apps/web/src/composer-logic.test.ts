@@ -6,6 +6,7 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  parseStandaloneComposerReviewCommand,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
@@ -246,5 +247,26 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+  });
+});
+
+describe("parseStandaloneComposerReviewCommand", () => {
+  it("parses a codex review command", () => {
+    expect(parseStandaloneComposerReviewCommand(" /review --codex review this plan ")).toEqual({
+      reviewerProvider: "codex",
+      payload: "review this plan",
+    });
+  });
+
+  it("parses a claude review command alias", () => {
+    expect(parseStandaloneComposerReviewCommand("/review --claude check sequencing")).toEqual({
+      reviewerProvider: "claudeAgent",
+      payload: "check sequencing",
+    });
+  });
+
+  it("rejects malformed review commands", () => {
+    expect(parseStandaloneComposerReviewCommand("/review")).toBeNull();
+    expect(parseStandaloneComposerReviewCommand("/review --codex")).toBeNull();
   });
 });

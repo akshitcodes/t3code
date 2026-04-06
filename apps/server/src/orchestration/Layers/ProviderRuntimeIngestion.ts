@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationProposedPlanId,
@@ -15,6 +16,14 @@ import {
 } from "@t3tools/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import {
+  buildPlanReviewFeedbackMessage,
+  findPendingPlanReviewRequest,
+  parsePlanReviewDecision,
+  PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
+  PLAN_REVIEW_FAILED_ACTIVITY_KIND,
+  providerLabel,
+} from "@t3tools/shared/review";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
@@ -872,6 +881,189 @@ const make = Effect.fn("make")(function* () {
     },
   );
 
+  const appendPlanReviewActivity = Effect.fn("appendPlanReviewActivity")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly kind: string;
+    readonly summary: string;
+    readonly payload: Record<string, unknown>;
+    readonly createdAt: string;
+    readonly tone?: "info" | "error";
+  }) {
+    yield* orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: CommandId.makeUnsafe(
+        `provider:plan-review-activity:${input.threadId}:${crypto.randomUUID()}`,
+      ),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.makeUnsafe(crypto.randomUUID()),
+        tone: input.tone ?? "info",
+        kind: input.kind,
+        summary: input.summary,
+        payload: input.payload,
+        turnId: null,
+        createdAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+  });
+
+  const getLatestAssistantMessageForTurn = Effect.fn("getLatestAssistantMessageForTurn")(function* (
+    threadId: ThreadId,
+    turnId: TurnId,
+  ) {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const thread = readModel.threads.find((entry) => entry.id === threadId);
+    if (!thread) {
+      return null;
+    }
+
+    return (
+      [...thread.messages]
+        .filter((message) => message.role === "assistant" && sameId(message.turnId, turnId))
+        .toSorted(
+          (left, right) =>
+            left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
+        )
+        .at(-1) ?? null
+    );
+  });
+
+  const bridgeCompletedPlanReview = Effect.fn("bridgeCompletedPlanReview")(function* (input: {
+    readonly reviewerThreadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly createdAt: string;
+  }) {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const reviewerThread = readModel.threads.find((entry) => entry.id === input.reviewerThreadId);
+    const pendingReview = reviewerThread
+      ? findPendingPlanReviewRequest(reviewerThread.activities)
+      : null;
+    if (!reviewerThread || !pendingReview) {
+      return;
+    }
+    if (!sameId(pendingReview.reviewerThreadId, input.reviewerThreadId)) {
+      return;
+    }
+    if (reviewerThread.latestTurn && !sameId(reviewerThread.latestTurn.turnId, input.turnId)) {
+      return;
+    }
+
+    const sourceThread = readModel.threads.find(
+      (entry) => entry.id === pendingReview.sourceThreadId,
+    );
+    if (!sourceThread) {
+      yield* appendPlanReviewActivity({
+        threadId: input.reviewerThreadId,
+        kind: PLAN_REVIEW_FAILED_ACTIVITY_KIND,
+        summary: "Review bridge failed",
+        payload: {
+          reviewId: pendingReview.reviewId,
+          detail: `Source thread '${pendingReview.sourceThreadId}' was not found.`,
+        },
+        createdAt: input.createdAt,
+        tone: "error",
+      });
+      return;
+    }
+
+    const assistantMessage = yield* getLatestAssistantMessageForTurn(
+      input.reviewerThreadId,
+      input.turnId,
+    );
+    const parsedReview = assistantMessage ? parsePlanReviewDecision(assistantMessage.text) : null;
+    if (!assistantMessage || !parsedReview) {
+      const detail = assistantMessage
+        ? "Reviewer response did not include the required DECISION line."
+        : `No assistant review message was recorded for turn '${input.turnId}'.`;
+      yield* appendPlanReviewActivity({
+        threadId: input.reviewerThreadId,
+        kind: PLAN_REVIEW_FAILED_ACTIVITY_KIND,
+        summary: "Review bridge failed",
+        payload: {
+          reviewId: pendingReview.reviewId,
+          sourceThreadId: pendingReview.sourceThreadId,
+          reviewerThreadId: pendingReview.reviewerThreadId,
+          reviewerProvider: pendingReview.reviewerProvider,
+          requestPrompt: pendingReview.requestPrompt,
+          detail,
+        },
+        createdAt: input.createdAt,
+        tone: "error",
+      });
+      yield* appendPlanReviewActivity({
+        threadId: pendingReview.sourceThreadId,
+        kind: PLAN_REVIEW_FAILED_ACTIVITY_KIND,
+        summary: `${providerLabel(pendingReview.reviewerProvider)} review bridge failed`,
+        payload: {
+          reviewId: pendingReview.reviewId,
+          sourceThreadId: pendingReview.sourceThreadId,
+          reviewerThreadId: pendingReview.reviewerThreadId,
+          reviewerProvider: pendingReview.reviewerProvider,
+          requestPrompt: pendingReview.requestPrompt,
+          detail,
+        },
+        createdAt: input.createdAt,
+        tone: "error",
+      });
+      return;
+    }
+
+    const feedbackMessage = buildPlanReviewFeedbackMessage({
+      reviewerProvider: pendingReview.reviewerProvider,
+      review: parsedReview,
+    });
+
+    yield* appendPlanReviewActivity({
+      threadId: input.reviewerThreadId,
+      kind: PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
+      summary: "Review completed",
+      payload: {
+        reviewId: pendingReview.reviewId,
+        sourceThreadId: pendingReview.sourceThreadId,
+        reviewerThreadId: pendingReview.reviewerThreadId,
+        reviewerProvider: pendingReview.reviewerProvider,
+        requestPrompt: pendingReview.requestPrompt,
+        decision: parsedReview.decision,
+        assistantMessageId: assistantMessage.id,
+      },
+      createdAt: input.createdAt,
+    });
+    yield* appendPlanReviewActivity({
+      threadId: pendingReview.sourceThreadId,
+      kind: PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
+      summary: `${providerLabel(pendingReview.reviewerProvider)} review received`,
+      payload: {
+        reviewId: pendingReview.reviewId,
+        sourceThreadId: pendingReview.sourceThreadId,
+        reviewerThreadId: pendingReview.reviewerThreadId,
+        reviewerProvider: pendingReview.reviewerProvider,
+        requestPrompt: pendingReview.requestPrompt,
+        decision: parsedReview.decision,
+        assistantMessageId: assistantMessage.id,
+      },
+      createdAt: input.createdAt,
+    });
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.makeUnsafe(
+        `provider:plan-review-feedback:${pendingReview.sourceThreadId}:${crypto.randomUUID()}`,
+      ),
+      threadId: pendingReview.sourceThreadId,
+      message: {
+        messageId: MessageId.makeUnsafe(`review-feedback:${crypto.randomUUID()}`),
+        role: "user",
+        text: feedbackMessage,
+        attachments: [],
+      },
+      modelSelection: sourceThread.modelSelection,
+      titleSeed: sourceThread.title,
+      runtimeMode: sourceThread.runtimeMode,
+      interactionMode: "plan",
+      createdAt: input.createdAt,
+    });
+  });
+
   const processRuntimeEvent = Effect.fn("processRuntimeEvent")(function* (
     event: ProviderRuntimeEvent,
   ) {
@@ -1134,6 +1326,20 @@ const make = Effect.fn("make")(function* () {
           turnId,
           updatedAt: now,
         });
+        yield* bridgeCompletedPlanReview({
+          reviewerThreadId: thread.id,
+          turnId,
+          createdAt: now,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider runtime ingestion failed to bridge completed plan review", {
+              eventId: event.eventId,
+              threadId: thread.id,
+              turnId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
       }
     }
 

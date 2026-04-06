@@ -18,6 +18,7 @@ import {
 export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
   dispatchCommand: "orchestration.dispatchCommand",
+  startPlanReview: "orchestration.startPlanReview",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   replayEvents: "orchestration.replayEvents",
@@ -490,47 +491,6 @@ const ThreadSessionStopCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-const DispatchableClientOrchestrationCommand = Schema.Union([
-  ProjectCreateCommand,
-  ProjectMetaUpdateCommand,
-  ProjectDeleteCommand,
-  ThreadCreateCommand,
-  ThreadDeleteCommand,
-  ThreadArchiveCommand,
-  ThreadUnarchiveCommand,
-  ThreadMetaUpdateCommand,
-  ThreadRuntimeModeSetCommand,
-  ThreadInteractionModeSetCommand,
-  ThreadTurnStartCommand,
-  ThreadTurnInterruptCommand,
-  ThreadApprovalRespondCommand,
-  ThreadUserInputRespondCommand,
-  ThreadCheckpointRevertCommand,
-  ThreadSessionStopCommand,
-]);
-export type DispatchableClientOrchestrationCommand =
-  typeof DispatchableClientOrchestrationCommand.Type;
-
-export const ClientOrchestrationCommand = Schema.Union([
-  ProjectCreateCommand,
-  ProjectMetaUpdateCommand,
-  ProjectDeleteCommand,
-  ThreadCreateCommand,
-  ThreadDeleteCommand,
-  ThreadArchiveCommand,
-  ThreadUnarchiveCommand,
-  ThreadMetaUpdateCommand,
-  ThreadRuntimeModeSetCommand,
-  ThreadInteractionModeSetCommand,
-  ClientThreadTurnStartCommand,
-  ThreadTurnInterruptCommand,
-  ThreadApprovalRespondCommand,
-  ThreadUserInputRespondCommand,
-  ThreadCheckpointRevertCommand,
-  ThreadSessionStopCommand,
-]);
-export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
-
 const ThreadSessionSetCommand = Schema.Struct({
   type: Schema.Literal("thread.session.set"),
   commandId: CommandId,
@@ -595,6 +555,47 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   turnCount: NonNegativeInt,
   createdAt: IsoDateTime,
 });
+
+const DispatchableClientOrchestrationCommand = Schema.Union([
+  ProjectCreateCommand,
+  ProjectMetaUpdateCommand,
+  ProjectDeleteCommand,
+  ThreadCreateCommand,
+  ThreadDeleteCommand,
+  ThreadArchiveCommand,
+  ThreadUnarchiveCommand,
+  ThreadMetaUpdateCommand,
+  ThreadRuntimeModeSetCommand,
+  ThreadInteractionModeSetCommand,
+  ThreadTurnStartCommand,
+  ThreadTurnInterruptCommand,
+  ThreadApprovalRespondCommand,
+  ThreadUserInputRespondCommand,
+  ThreadCheckpointRevertCommand,
+  ThreadSessionStopCommand,
+]);
+export type DispatchableClientOrchestrationCommand =
+  typeof DispatchableClientOrchestrationCommand.Type;
+
+export const ClientOrchestrationCommand = Schema.Union([
+  ProjectCreateCommand,
+  ProjectMetaUpdateCommand,
+  ProjectDeleteCommand,
+  ThreadCreateCommand,
+  ThreadDeleteCommand,
+  ThreadArchiveCommand,
+  ThreadUnarchiveCommand,
+  ThreadMetaUpdateCommand,
+  ThreadRuntimeModeSetCommand,
+  ThreadInteractionModeSetCommand,
+  ClientThreadTurnStartCommand,
+  ThreadTurnInterruptCommand,
+  ThreadApprovalRespondCommand,
+  ThreadUserInputRespondCommand,
+  ThreadCheckpointRevertCommand,
+  ThreadSessionStopCommand,
+]);
+export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
@@ -1007,6 +1008,21 @@ export const DispatchResult = Schema.Struct({
 });
 export type DispatchResult = typeof DispatchResult.Type;
 
+export const OrchestrationStartPlanReviewInput = Schema.Struct({
+  sourceThreadId: ThreadId,
+  reviewerProvider: ProviderKind,
+  payload: TrimmedNonEmptyString,
+});
+export type OrchestrationStartPlanReviewInput = typeof OrchestrationStartPlanReviewInput.Type;
+
+export const OrchestrationStartPlanReviewResult = Schema.Struct({
+  sequence: NonNegativeInt,
+  reviewerThreadId: ThreadId,
+  reviewerThreadTitle: TrimmedNonEmptyString,
+  createdThread: Schema.Boolean,
+});
+export type OrchestrationStartPlanReviewResult = typeof OrchestrationStartPlanReviewResult.Type;
+
 export const OrchestrationGetSnapshotInput = Schema.Struct({});
 export type OrchestrationGetSnapshotInput = typeof OrchestrationGetSnapshotInput.Type;
 const OrchestrationGetSnapshotResult = OrchestrationReadModel;
@@ -1046,6 +1062,10 @@ export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
     output: DispatchResult,
+  },
+  startPlanReview: {
+    input: OrchestrationStartPlanReviewInput,
+    output: OrchestrationStartPlanReviewResult,
   },
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,

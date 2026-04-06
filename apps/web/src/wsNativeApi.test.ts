@@ -77,6 +77,7 @@ const rpcClientMock = {
   orchestration: {
     getSnapshot: vi.fn(),
     dispatchCommand: vi.fn(),
+    startPlanReview: vi.fn(),
     getTurnDiff: vi.fn(),
     getFullThreadDiff: vi.fn(),
     replayEvents: vi.fn(),
@@ -277,6 +278,27 @@ describe("wsNativeApi", () => {
     await api.orchestration.dispatchCommand(command);
 
     expect(rpcClientMock.orchestration.dispatchCommand).toHaveBeenCalledWith(command);
+  });
+
+  it("forwards plan review starts directly to the RPC client", async () => {
+    rpcClientMock.orchestration.startPlanReview.mockResolvedValue({
+      sequence: 1,
+      reviewerThreadId: ThreadId.makeUnsafe("thread-review"),
+      reviewerThreadTitle: "Review: Default Thread (Codex)",
+      createdThread: true,
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    const input = {
+      sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+      reviewerProvider: "codex" as const,
+      payload: "Review this plan",
+    };
+
+    await api.orchestration.startPlanReview(input);
+
+    expect(rpcClientMock.orchestration.startPlanReview).toHaveBeenCalledWith(input);
   });
 
   it("forwards workspace file writes to the project RPC", async () => {

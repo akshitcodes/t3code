@@ -8,6 +8,7 @@ import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { DiffIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
@@ -18,6 +19,8 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  linkedThreadLabel?: string;
+  linkedThreadTitle?: string;
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -34,6 +37,7 @@ interface ChatHeaderProps {
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
+  onOpenLinkedThread?: () => void;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
 }
@@ -42,6 +46,8 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   activeProjectName,
+  linkedThreadLabel,
+  linkedThreadTitle,
   isGitRepo,
   openInCwd,
   activeProjectScripts,
@@ -58,6 +64,7 @@ export const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
+  onOpenLinkedThread,
   onToggleTerminal,
   onToggleDiff,
 }: ChatHeaderProps) {
@@ -75,6 +82,18 @@ export const ChatHeader = memo(function ChatHeader({
           <Badge variant="outline" className="min-w-0 shrink overflow-hidden">
             <span className="min-w-0 truncate">{activeProjectName}</span>
           </Badge>
+        )}
+        {linkedThreadLabel && linkedThreadTitle && onOpenLinkedThread && (
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            className="h-6 max-w-full shrink"
+            onClick={onOpenLinkedThread}
+            title={linkedThreadTitle}
+          >
+            <span className="truncate">{linkedThreadLabel}</span>
+          </Button>
         )}
         {activeProjectName && !isGitRepo && (
           <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">

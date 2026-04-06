@@ -51,6 +51,10 @@
     "./projectScripts": {
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
+    },
+    "./review": {
+      "types": "./src/review.ts",
+      "import": "./src/review.ts"
     }
   },
   "scripts": {

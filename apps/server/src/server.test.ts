@@ -1668,6 +1668,58 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("starts plan reviews server-side without client activity appends", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+            getReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.startPlanReview]({
+            sourceThreadId: defaultThreadId,
+            reviewerProvider: "codex",
+            payload: "Review this plan critically.",
+          }),
+        ),
+      );
+
+      assert.equal(result.sequence, 6);
+      assert.equal(result.reviewerThreadTitle, "Review: Default Thread (Codex)");
+      assert.equal(result.createdThread, true);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        [
+          "thread.create",
+          "thread.activity.append",
+          "thread.activity.append",
+          "thread.activity.append",
+          "thread.activity.append",
+          "thread.turn.start",
+        ],
+      );
+      const finalCommand = dispatchedCommands[5];
+      assertTrue(finalCommand?.type === "thread.turn.start");
+      if (finalCommand?.type === "thread.turn.start") {
+        assert.equal(finalCommand.message.text.includes("DECISION: update-plan"), true);
+        assert.equal(finalCommand.threadId, result.reviewerThreadId);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect(
     "bootstraps first-send worktree turns on the server before dispatching turn start",
     () =>
