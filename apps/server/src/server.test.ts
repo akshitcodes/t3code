@@ -17,9 +17,11 @@ import {
   ProjectId,
   ResolvedKeybindingRule,
   ThreadId,
+  TurnId,
   WS_METHODS,
   WsRpcGroup,
   EditorId,
+  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
@@ -85,7 +87,7 @@ const defaultModelSelection = {
   model: "gpt-5-codex",
 } as const;
 
-const makeDefaultOrchestrationReadModel = () => {
+const makeDefaultOrchestrationReadModel = (): OrchestrationReadModel => {
   const now = new Date().toISOString();
   return {
     snapshotSequence: 0,
@@ -1724,17 +1726,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("continues plan reviews by sending only the latest source-agent reply", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
-      const sourceTurnId = "turn-source-2";
+      const sourceTurnId = TurnId.makeUnsafe("turn-source-2");
       const reviewerThreadId = ThreadId.makeUnsafe("thread-review");
-      const readModel = makeDefaultOrchestrationReadModel();
-      readModel.threads[0] = {
-        ...readModel.threads[0]!,
+      const baseReadModel = makeDefaultOrchestrationReadModel();
+      const sourceThread = {
+        ...baseReadModel.threads[0]!,
         latestTurn: {
           turnId: sourceTurnId,
-          state: "completed",
+          state: "completed" as const,
+          requestedAt: "2026-04-06T10:01:00.000Z",
           startedAt: "2026-04-06T10:01:00.000Z",
           updatedAt: "2026-04-06T10:02:00.000Z",
           endedAt: "2026-04-06T10:02:00.000Z",
+          completedAt: "2026-04-06T10:02:00.000Z",
+          assistantMessageId: MessageId.makeUnsafe("msg-source-assistant"),
           providerRequests: [],
           pendingApprovalRequest: null,
           pendingUserInputRequest: null,
@@ -1743,7 +1748,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         messages: [
           {
             id: MessageId.makeUnsafe("msg-source-assistant"),
-            role: "assistant",
+            role: "assistant" as const,
             text: "Updated plan:\n1. Add rollback\n2. Add smoke tests",
             attachments: [],
             turnId: sourceTurnId,
@@ -1755,7 +1760,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         activities: [
           {
             id: EventId.makeUnsafe("evt-review-complete"),
-            tone: "info",
+            tone: "info" as const,
             kind: "plan-review.completed",
             summary: "Codex review received",
             payload: {
@@ -1774,14 +1779,18 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
         ],
       };
-      readModel.threads.push({
-        ...readModel.threads[0]!,
+      const reviewerThread = {
+        ...sourceThread,
         id: reviewerThreadId,
         title: "Review: Default Thread (Codex)",
         activities: [],
         messages: [],
         latestTurn: null,
-      });
+      };
+      const readModel: OrchestrationReadModel = {
+        ...baseReadModel,
+        threads: [sourceThread, reviewerThread],
+      };
 
       yield* buildAppUnderTest({
         layers: {
@@ -1829,13 +1838,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
       const reviewerThreadId = ThreadId.makeUnsafe("thread-review");
-      const readModel = makeDefaultOrchestrationReadModel();
-      readModel.threads[0] = {
-        ...readModel.threads[0]!,
+      const baseReadModel = makeDefaultOrchestrationReadModel();
+      const sourceThread = {
+        ...baseReadModel.threads[0]!,
         activities: [
           {
             id: EventId.makeUnsafe("evt-review-complete"),
-            tone: "info",
+            tone: "info" as const,
             kind: "plan-review.completed",
             summary: "Codex review received",
             payload: {
@@ -1852,6 +1861,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             createdAt: "2026-04-06T10:01:00.000Z",
           },
         ],
+      };
+      const readModel: OrchestrationReadModel = {
+        ...baseReadModel,
+        threads: [sourceThread],
       };
 
       yield* buildAppUnderTest({

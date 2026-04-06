@@ -152,8 +152,8 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const startPlanReviewRound = (input: {
       readonly sourceThread: OrchestrationThread;
       readonly reviewerProvider: ProviderKind;
-      readonly reviewerThreadId?: ThreadId;
-      readonly reviewerThreadTitle?: string;
+      readonly reviewerThreadId?: ThreadId | undefined;
+      readonly reviewerThreadTitle?: string | undefined;
       readonly requestPrompt: string;
       readonly rootRequestPrompt: string;
       readonly round: number;
@@ -660,7 +660,6 @@ const WsRpcLayer = WsRpcGroup.toLayer(
                   round: activeReview.round + 1,
                   reviewPrompt: buildPlanReviewIterationRequestPrompt({
                     latestSourceResponse: latestAssistantMessage.text,
-                    previousDecision: activeReview.decision,
                   }),
                   createdAt,
                 });
