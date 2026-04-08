@@ -1,3 +1,5 @@
+import type { ProviderKind } from "@t3tools/contracts";
+
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
@@ -5,7 +7,7 @@ export type ComposerTriggerKind = "path" | "slash-command" | "slash-model";
 export type ComposerSlashCommand = "model" | "plan" | "default" | "review";
 
 export interface ComposerReviewCommand {
-  reviewerProvider: "codex" | "claudeAgent";
+  reviewerProvider: ProviderKind;
   payload: string;
 }
 
@@ -255,7 +257,8 @@ export function parseStandaloneComposerSlashCommand(
 }
 
 export function parseStandaloneComposerReviewCommand(text: string): ComposerReviewCommand | null {
-  const match = /^\/review\s+--(codex|claude|claudeagent)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  const match =
+    /^\/review\s+--(codex|claude|claudeagent|copilot)(?:\s+([\s\S]*))?$/i.exec(text.trim());
   if (!match?.[1]) {
     return null;
   }
@@ -265,7 +268,12 @@ export function parseStandaloneComposerReviewCommand(text: string): ComposerRevi
     return null;
   }
   return {
-    reviewerProvider: provider === "codex" ? "codex" : "claudeAgent",
+    reviewerProvider:
+      provider === "codex"
+        ? "codex"
+        : provider === "copilot"
+          ? "copilot"
+          : "claudeAgent",
     payload,
   };
 }

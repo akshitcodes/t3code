@@ -246,14 +246,17 @@ const hasMetricSnapshot = (
 function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter("claudeAgent");
+  const copilot = makeFakeCodexAdapter("copilot");
   const registry: typeof ProviderAdapterRegistry.Service = {
     getByProvider: (provider) =>
       provider === "codex"
         ? Effect.succeed(codex.adapter)
         : provider === "claudeAgent"
           ? Effect.succeed(claude.adapter)
+          : provider === "copilot"
+            ? Effect.succeed(copilot.adapter)
           : Effect.fail(new ProviderUnsupportedError({ provider })),
-    listProviders: () => Effect.succeed(["codex", "claudeAgent"]),
+    listProviders: () => Effect.succeed(["codex", "claudeAgent", "copilot"]),
   };
 
   const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
@@ -280,6 +283,7 @@ function makeProviderServiceLayer() {
   return {
     codex,
     claude,
+    copilot,
     layer,
   };
 }
@@ -288,14 +292,17 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
   Effect.gen(function* () {
     const codex = makeFakeCodexAdapter();
     const claude = makeFakeCodexAdapter("claudeAgent");
+    const copilot = makeFakeCodexAdapter("copilot");
     const registry: typeof ProviderAdapterRegistry.Service = {
       getByProvider: (provider) =>
         provider === "codex"
           ? Effect.succeed(codex.adapter)
           : provider === "claudeAgent"
             ? Effect.succeed(claude.adapter)
+            : provider === "copilot"
+              ? Effect.succeed(copilot.adapter)
             : Effect.fail(new ProviderUnsupportedError({ provider })),
-      listProviders: () => Effect.succeed(["codex", "claudeAgent"]),
+      listProviders: () => Effect.succeed(["codex", "claudeAgent", "copilot"]),
     };
     const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
     const serverSettingsLayer = ServerSettingsService.layerTest({

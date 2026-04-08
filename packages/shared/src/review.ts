@@ -79,11 +79,18 @@ function compareActivitiesByOrder(
 }
 
 function parseProviderKind(value: unknown): ProviderKind | null {
-  return value === "codex" || value === "claudeAgent" ? value : null;
+  return value === "codex" || value === "claudeAgent" || value === "copilot" ? value : null;
 }
 
-export function providerLabel(provider: ProviderKind): "Codex" | "Claude" {
-  return provider === "codex" ? "Codex" : "Claude";
+export function providerLabel(provider: ProviderKind): "Codex" | "Claude" | "GitHub Copilot" {
+  switch (provider) {
+    case "codex":
+      return "Codex";
+    case "claudeAgent":
+      return "Claude";
+    case "copilot":
+      return "GitHub Copilot";
+  }
 }
 
 export function buildPlanReviewThreadTitle(

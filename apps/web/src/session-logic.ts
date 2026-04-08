@@ -29,6 +29,7 @@ export const PROVIDER_OPTIONS: Array<{
 }> = [
   { value: "codex", label: "Codex", available: true },
   { value: "claudeAgent", label: "Claude", available: true },
+  { value: "copilot", label: "GitHub Copilot", available: true },
   { value: "cursor", label: "Cursor", available: false },
 ];
 

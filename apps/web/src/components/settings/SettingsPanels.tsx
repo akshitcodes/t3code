@@ -45,6 +45,7 @@ import {
   getCustomModelOptionsByProvider,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
+import { buildModelSelection } from "../../providerSelection";
 import { ensureNativeApi, readNativeApi } from "../../nativeApi";
 import { useStore } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
@@ -89,8 +90,8 @@ const TIMESTAMP_FORMAT_LABELS = {
 type InstallProviderSettings = {
   provider: ProviderKind;
   title: string;
-  binaryPlaceholder: string;
-  binaryDescription: ReactNode;
+  binaryPlaceholder?: string;
+  binaryDescription?: ReactNode;
   homePathKey?: "codexHomePath";
   homePlaceholder?: string;
   homeDescription?: ReactNode;
@@ -111,6 +112,10 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     title: "Claude",
     binaryPlaceholder: "Claude binary path",
     binaryDescription: "Path to the Claude binary",
+  },
+  {
+    provider: "copilot",
+    title: "GitHub Copilot",
   },
 ] as const;
 
@@ -537,12 +542,14 @@ export function GeneralSettingsPanel() {
         DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
       settings.providers.claudeAgent.customModels.length > 0,
     ),
+    copilot: Boolean(settings.providers.copilot.customModels.length > 0),
   });
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
     codex: "",
     claudeAgent: "",
+    copilot: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -758,7 +765,7 @@ export function GeneralSettingsPanel() {
       homePathKey: providerSettings.homePathKey,
       homePlaceholder: providerSettings.homePlaceholder,
       homeDescription: providerSettings.homeDescription,
-      binaryPathValue: providerConfig.binaryPath,
+      binaryPathValue: "binaryPath" in providerConfig ? providerConfig.binaryPath : "",
       isDirty: !Equal.equals(providerConfig, defaultProviderConfig),
       liveProvider,
       models,
@@ -1051,20 +1058,20 @@ export function GeneralSettingsPanel() {
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                 onModelOptionsChange={(nextOptions) => {
                   updateSettings({
-                    textGenerationModelSelection: resolveAppModelSelectionState(
-                      {
-                        ...settings,
-                        textGenerationModelSelection: {
-                          provider: textGenProvider,
-                          model: textGenModel,
-                          ...(nextOptions ? { options: nextOptions } : {}),
-                        },
-                      },
-                      serverProviders,
-                    ),
-                  });
-                }}
-              />
+                        textGenerationModelSelection: resolveAppModelSelectionState(
+                          {
+                            ...settings,
+                            textGenerationModelSelection: buildModelSelection(
+                              textGenProvider,
+                              textGenModel,
+                              nextOptions,
+                            ),
+                          },
+                          serverProviders,
+                        ),
+                      });
+                    }}
+                  />
             </div>
           }
         />
@@ -1205,10 +1212,11 @@ export function GeneralSettingsPanel() {
               >
                 <CollapsibleContent>
                   <div className="space-y-0">
-                    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                      <label
-                        htmlFor={`provider-install-${providerCard.provider}-binary-path`}
-                        className="block"
+                    {providerCard.binaryPlaceholder && providerCard.binaryDescription ? (
+                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+                        <label
+                          htmlFor={`provider-install-${providerCard.provider}-binary-path`}
+                          className="block"
                       >
                         <span className="text-xs font-medium text-foreground">
                           {providerDisplayName} binary path
@@ -1235,7 +1243,8 @@ export function GeneralSettingsPanel() {
                           {providerCard.binaryDescription}
                         </span>
                       </label>
-                    </div>
+                      </div>
+                    ) : null}
 
                     {providerCard.homePathKey ? (
                       <div className="border-t border-border/60 px-4 py-3 sm:px-5">
@@ -1385,7 +1394,9 @@ export function GeneralSettingsPanel() {
                           placeholder={
                             providerCard.provider === "codex"
                               ? "gpt-6.7-codex-ultra-preview"
-                              : "claude-sonnet-5-0"
+                              : providerCard.provider === "claudeAgent"
+                                ? "claude-sonnet-5-0"
+                                : "gpt-5.4-mini"
                           }
                           spellCheck={false}
                         />

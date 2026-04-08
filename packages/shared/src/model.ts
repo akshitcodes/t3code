@@ -4,6 +4,7 @@ import {
   type ClaudeCodeEffort,
   type ClaudeModelOptions,
   type CodexModelOptions,
+  type CopilotModelOptions,
   type ModelCapabilities,
   type ModelSelection,
   type ProviderKind,
@@ -113,6 +114,19 @@ export function normalizeClaudeModelOptionsWithCapabilities(
     ...(effort ? { effort: effort as ClaudeModelOptions["effort"] } : {}),
     ...(fastMode !== undefined ? { fastMode } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
+  };
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
+export function normalizeCopilotModelOptionsWithCapabilities(
+  caps: ModelCapabilities,
+  modelOptions: CopilotModelOptions | null | undefined,
+): CopilotModelOptions | undefined {
+  const reasoningEffort = resolveEffort(caps, modelOptions?.reasoningEffort);
+  const nextOptions: CopilotModelOptions = {
+    ...(reasoningEffort
+      ? { reasoningEffort: reasoningEffort as CopilotModelOptions["reasoningEffort"] }
+      : {}),
   };
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }

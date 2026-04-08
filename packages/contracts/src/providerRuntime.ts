@@ -24,6 +24,8 @@ const RuntimeEventRawSource = Schema.Literals([
   "claude.sdk.message",
   "claude.sdk.permission",
   "codex.sdk.thread-event",
+  "copilot.sdk.event",
+  "copilot.sdk.permission",
 ]);
 export type RuntimeEventRawSource = typeof RuntimeEventRawSource.Type;
 

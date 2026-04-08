@@ -1,4 +1,7 @@
 import {
+  type ClaudeModelOptions,
+  type CodexModelOptions,
+  type CopilotModelOptions,
   type ProviderKind,
   type ProviderModelOptions,
   type ServerProviderModel,
@@ -11,6 +14,7 @@ import { TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 import {
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeCopilotModelOptionsWithCapabilities,
 } from "@t3tools/shared/model";
 
 export type ComposerProviderStateInput = {
@@ -69,10 +73,22 @@ function getProviderStateFromCapabilities(
   const promptEffort = resolveEffort(caps, rawEffort) ?? null;
 
   // Normalize options for dispatch
-  const normalizedOptions =
-    provider === "codex"
-      ? normalizeCodexModelOptionsWithCapabilities(caps, providerOptions)
-      : normalizeClaudeModelOptionsWithCapabilities(caps, providerOptions);
+  const normalizedOptions = (() => {
+    switch (provider) {
+      case "codex":
+        return normalizeCodexModelOptionsWithCapabilities(caps, providerOptions as CodexModelOptions);
+      case "copilot":
+        return normalizeCopilotModelOptionsWithCapabilities(
+          caps,
+          providerOptions as CopilotModelOptions,
+        );
+      case "claudeAgent":
+        return normalizeClaudeModelOptionsWithCapabilities(
+          caps,
+          providerOptions as ClaudeModelOptions,
+        );
+    }
+  })();
 
   // Ultrathink styling (driven by capabilities data, not provider identity)
   const ultrathinkActive =
@@ -154,6 +170,11 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
         onPromptChange={onPromptChange}
       />
     ),
+  },
+  copilot: {
+    getState: (input) => getProviderStateFromCapabilities(input),
+    renderTraitsMenuContent: () => null,
+    renderTraitsPicker: () => null,
   },
 };
 

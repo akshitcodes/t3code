@@ -265,6 +265,15 @@ describe("parseStandaloneComposerReviewCommand", () => {
     });
   });
 
+  it("parses a copilot review command", () => {
+    expect(parseStandaloneComposerReviewCommand("/review --copilot validate assumptions")).toEqual(
+      {
+        reviewerProvider: "copilot",
+        payload: "validate assumptions",
+      },
+    );
+  });
+
   it("rejects malformed review commands", () => {
     expect(parseStandaloneComposerReviewCommand("/review")).toBeNull();
     expect(parseStandaloneComposerReviewCommand("/review --codex")).toBeNull();

@@ -2,6 +2,7 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   type ModelSelection,
   type ProviderKind,
+  type ProviderModelOptions,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { normalizeModelSlug, resolveSelectableModel } from "@t3tools/shared/model";
@@ -12,6 +13,7 @@ import {
   getProviderModels,
   resolveSelectableProvider,
 } from "./providerModels";
+import { buildModelSelection, ORDERED_PROVIDER_KINDS } from "./providerSelection";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
@@ -44,6 +46,13 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     description: "Save additional Claude model slugs for the picker and `/model` command.",
     placeholder: "your-claude-model-slug",
     example: "claude-sonnet-5-0",
+  },
+  copilot: {
+    provider: "copilot",
+    title: "GitHub Copilot",
+    description: "Save additional Copilot model slugs for the picker and `/model` command.",
+    placeholder: "your-copilot-model-slug",
+    example: "gpt-5.4-mini",
   },
 };
 
@@ -152,20 +161,16 @@ export function getCustomModelOptionsByProvider(
   selectedProvider?: ProviderKind | null,
   selectedModel?: string | null,
 ): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
-  return {
-    codex: getAppModelOptions(
+  const result = {} as Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
+  for (const provider of ORDERED_PROVIDER_KINDS) {
+    result[provider] = getAppModelOptions(
       settings,
       providers,
-      "codex",
-      selectedProvider === "codex" ? selectedModel : undefined,
-    ),
-    claudeAgent: getAppModelOptions(
-      settings,
-      providers,
-      "claudeAgent",
-      selectedProvider === "claudeAgent" ? selectedModel : undefined,
-    ),
-  };
+      provider,
+      selectedProvider === provider ? selectedModel : undefined,
+    );
+  }
+  return result;
 }
 
 export function resolveAppModelSelectionState(
@@ -192,9 +197,9 @@ export function resolveAppModelSelectionState(
     },
   });
 
-  return {
+  return buildModelSelection(
     provider,
     model,
-    ...(modelOptionsForDispatch ? { options: modelOptionsForDispatch } : {}),
-  };
+    modelOptionsForDispatch as ProviderModelOptions[typeof provider] | undefined,
+  );
 }

@@ -140,6 +140,9 @@ describe("WsRpcAtomClient", () => {
           ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
           enabled: false,
         },
+        copilot: {
+          ...DEFAULT_SERVER_SETTINGS.providers.copilot,
+        },
       },
     };
     const requestPromise = runRpc((client) => client(WS_METHODS.serverGetSettings, {}));
@@ -189,6 +192,9 @@ describe("WsRpcAtomClient", () => {
         claudeAgent: {
           ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
           enabled: false,
+        },
+        copilot: {
+          ...DEFAULT_SERVER_SETTINGS.providers.copilot,
         },
       },
     };

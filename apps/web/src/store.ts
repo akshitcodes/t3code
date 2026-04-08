@@ -10,6 +10,7 @@ import {
   type OrchestrationCheckpointSummary,
   type OrchestrationThread,
   type OrchestrationSessionStatus,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
@@ -21,6 +22,7 @@ import {
 } from "./session-logic";
 import { sanitizeThreadErrorMessage } from "./rpc/transportError";
 import { type ChatMessage, type Project, type SidebarThreadSummary, type Thread } from "./types";
+import { buildModelSelection } from "./providerSelection";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -81,12 +83,21 @@ function updateProject(
   return changed ? next : projects;
 }
 
-function normalizeModelSelection<T extends { provider: "codex" | "claudeAgent"; model: string }>(
+function normalizeModelSelection<T extends { provider: ProviderKind; model: string }>(
   selection: T,
 ): T {
+  const selectionWithOptions = selection as T & { options?: ModelSelection["options"] };
+  const normalizedSelection = buildModelSelection(
+    selection.provider,
+    resolveModelSlugForProvider(selection.provider, selection.model),
+    selectionWithOptions.options,
+  );
   return {
     ...selection,
-    model: resolveModelSlugForProvider(selection.provider, selection.model),
+    model: normalizedSelection.model,
+    ...("options" in normalizedSelection && normalizedSelection.options
+      ? { options: normalizedSelection.options }
+      : {}),
   };
 }
 
@@ -494,7 +505,7 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex" || providerName === "claudeAgent") {
+  if (providerName === "codex" || providerName === "claudeAgent" || providerName === "copilot") {
     return providerName;
   }
   return "codex";

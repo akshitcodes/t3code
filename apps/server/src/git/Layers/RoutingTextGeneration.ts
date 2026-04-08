@@ -4,8 +4,7 @@
  * request input.
  *
  * When `modelSelection.provider` is `"claudeAgent"` the request is forwarded to
- * the Claude layer; for any other value (including the default `undefined`) it
- * falls through to the Codex layer.
+ * the Claude layer; all other values currently fall through to the Codex layer.
  *
  * @module RoutingTextGeneration
  */
