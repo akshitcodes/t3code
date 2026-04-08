@@ -59,6 +59,32 @@ export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
+export function deriveHiddenAssistantMessageIds(input: {
+  messages: ReadonlyArray<ChatMessage>;
+  toolTurnIds: ReadonlySet<string>;
+  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+}): Set<MessageId> {
+  const hiddenMessageIds = new Set<MessageId>();
+
+  for (const message of input.messages) {
+    if (message.role !== "assistant" || message.streaming) {
+      continue;
+    }
+    if (message.text.trim().length > 0) {
+      continue;
+    }
+    if (input.turnDiffSummaryByAssistantMessageId.has(message.id)) {
+      continue;
+    }
+    if (!message.turnId || !input.toolTurnIds.has(message.turnId)) {
+      continue;
+    }
+    hiddenMessageIds.add(message.id);
+  }
+
+  return hiddenMessageIds;
+}
+
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   completionDividerBeforeEntryId: string | null;

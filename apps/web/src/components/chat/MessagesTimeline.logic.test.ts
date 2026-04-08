@@ -1,5 +1,10 @@
+import { MessageId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
-import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import {
+  computeMessageDurationStart,
+  deriveHiddenAssistantMessageIds,
+  normalizeCompactToolLabel,
+} from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
@@ -141,5 +146,56 @@ describe("normalizeCompactToolLabel", () => {
 
   it("removes trailing completion wording from other labels", () => {
     expect(normalizeCompactToolLabel("Read file completed")).toBe("Read file");
+  });
+});
+
+describe("deriveHiddenAssistantMessageIds", () => {
+  it("hides empty assistant messages that only correspond to tool turns", () => {
+    const assistantMessageId = MessageId.makeUnsafe("assistant-tool-only");
+    const hidden = deriveHiddenAssistantMessageIds({
+      messages: [
+        {
+          id: assistantMessageId,
+          role: "assistant",
+          text: "",
+          turnId: "turn-1" as never,
+          createdAt: "2026-04-09T00:00:00.000Z",
+          streaming: false,
+        },
+      ],
+      toolTurnIds: new Set(["turn-1"]),
+      turnDiffSummaryByAssistantMessageId: new Map(),
+    });
+
+    expect(hidden).toEqual(new Set([assistantMessageId]));
+  });
+
+  it("keeps empty assistant messages that anchor a diff summary", () => {
+    const assistantMessageId = MessageId.makeUnsafe("assistant-diff-anchor");
+    const hidden = deriveHiddenAssistantMessageIds({
+      messages: [
+        {
+          id: assistantMessageId,
+          role: "assistant",
+          text: "",
+          turnId: "turn-1" as never,
+          createdAt: "2026-04-09T00:00:00.000Z",
+          streaming: false,
+        },
+      ],
+      toolTurnIds: new Set(["turn-1"]),
+      turnDiffSummaryByAssistantMessageId: new Map([
+        [
+          assistantMessageId,
+          {
+            turnId: "turn-1" as never,
+            completedAt: "2026-04-09T00:00:05.000Z",
+            files: [],
+          },
+        ],
+      ]),
+    });
+
+    expect(hidden.size).toBe(0);
   });
 });

@@ -592,6 +592,16 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         case "assistant.message":
           if (!context.turnState) return;
+          // Copilot sometimes emits message-complete events that contain only
+          // tool requests and no displayable assistant text. Those should stay
+          // in the tool/work log, not become empty assistant chat messages.
+          if (
+            event.data.content.trim().length === 0 &&
+            Array.isArray(event.data.toolRequests) &&
+            event.data.toolRequests.length > 0
+          ) {
+            return;
+          }
           context.turnState.items.push(event);
           yield* offerRuntimeEvent({
             ...base,

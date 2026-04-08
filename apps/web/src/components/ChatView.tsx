@@ -88,6 +88,7 @@ import { LRUCache } from "../lib/lruCache";
 import { basenameOfPath } from "../vscode-icons";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
+import { deriveHiddenAssistantMessageIds } from "./chat/MessagesTimeline.logic";
 import BranchToolbar from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
@@ -1328,6 +1329,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
       delete attachmentPreviewHandoffTimeoutByMessageIdRef.current[messageId];
     }, ATTACHMENT_PREVIEW_HANDOFF_TTL_MS);
   }, []);
+  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
+    useTurnDiffSummaries(activeThread);
+  const turnDiffSummaryByAssistantMessageId = useMemo(() => {
+    const byMessageId = new Map<MessageId, TurnDiffSummary>();
+    for (const summary of turnDiffSummaries) {
+      if (!summary.assistantMessageId) continue;
+      byMessageId.set(summary.assistantMessageId, summary);
+    }
+    return byMessageId;
+  }, [turnDiffSummaries]);
+  const toolTurnIds = useMemo(() => {
+    const next = new Set<string>();
+    for (const activity of threadActivities) {
+      if (activity.tone !== "tool" || !activity.turnId) continue;
+      next.add(activity.turnId);
+    }
+    return next;
+  }, [threadActivities]);
   const serverMessages = activeThread?.messages;
   const timelineMessages = useMemo(() => {
     const messages = serverMessages ?? [];
@@ -1372,31 +1391,38 @@ export default function ChatView({ threadId }: ChatViewProps) {
             return changed ? { ...message, attachments } : message;
           });
 
-    if (optimisticUserMessages.length === 0) {
-      return serverMessagesWithPreviewHandoff;
+    const mergedMessages = (() => {
+      if (optimisticUserMessages.length === 0) {
+        return serverMessagesWithPreviewHandoff;
+      }
+      const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
+      const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
+      return pendingMessages.length === 0
+        ? serverMessagesWithPreviewHandoff
+        : [...serverMessagesWithPreviewHandoff, ...pendingMessages];
+    })();
+
+    const hiddenAssistantMessageIds = deriveHiddenAssistantMessageIds({
+      messages: mergedMessages,
+      toolTurnIds,
+      turnDiffSummaryByAssistantMessageId,
+    });
+    if (hiddenAssistantMessageIds.size === 0) {
+      return mergedMessages;
     }
-    const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
-    const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
-    if (pendingMessages.length === 0) {
-      return serverMessagesWithPreviewHandoff;
-    }
-    return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
-  }, [serverMessages, attachmentPreviewHandoffByMessageId, optimisticUserMessages]);
+    return mergedMessages.filter((message) => !hiddenAssistantMessageIds.has(message.id));
+  }, [
+    serverMessages,
+    attachmentPreviewHandoffByMessageId,
+    optimisticUserMessages,
+    toolTurnIds,
+    turnDiffSummaryByAssistantMessageId,
+  ]);
   const timelineEntries = useMemo(
     () =>
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
-  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
-    useTurnDiffSummaries(activeThread);
-  const turnDiffSummaryByAssistantMessageId = useMemo(() => {
-    const byMessageId = new Map<MessageId, TurnDiffSummary>();
-    for (const summary of turnDiffSummaries) {
-      if (!summary.assistantMessageId) continue;
-      byMessageId.set(summary.assistantMessageId, summary);
-    }
-    return byMessageId;
-  }, [turnDiffSummaries]);
   const revertTurnCountByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<MessageId, number>();
     for (let index = 0; index < timelineEntries.length; index += 1) {
