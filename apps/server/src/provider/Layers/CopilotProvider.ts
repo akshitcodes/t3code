@@ -12,7 +12,6 @@ import { resolveCopilotCliPath } from "../copilotCliPath";
 import { makeManagedServerProvider } from "../makeManagedServerProvider";
 import {
   buildServerProvider,
-  DEFAULT_TIMEOUT_MS,
   detailFromResult,
   isCommandMissingCause,
   parseGenericCliVersion,
@@ -23,6 +22,7 @@ import { CopilotProvider } from "../Services/CopilotProvider";
 import { ServerSettingsError } from "@t3tools/contracts";
 
 const PROVIDER = "copilot" as const;
+const COPILOT_VERSION_TIMEOUT_MS = 20_000;
 
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -95,6 +95,38 @@ const runCopilotCommand = Effect.fn("runCopilotCommand")(function* (
   return yield* spawnAndCollect(binaryPath, command);
 });
 
+function isUnsupportedVersionCommandOutput(output: string): boolean {
+  const lowerOutput = output.toLowerCase();
+  return (
+    lowerOutput.includes("unknown command") ||
+    lowerOutput.includes("unrecognized command") ||
+    lowerOutput.includes("unexpected argument") ||
+    lowerOutput.includes("too many arguments")
+  );
+}
+
+const probeCopilotVersion = Effect.fn("probeCopilotVersion")(function* (binaryPath: string) {
+  const primaryProbe = yield* runCopilotCommand(binaryPath, ["version"]).pipe(
+    Effect.timeoutOption(COPILOT_VERSION_TIMEOUT_MS),
+    Effect.result,
+  );
+
+  if (Result.isSuccess(primaryProbe) && Option.isSome(primaryProbe.success)) {
+    const primaryResult = primaryProbe.success.value;
+    if (
+      primaryResult.code !== 0 &&
+      isUnsupportedVersionCommandOutput(`${primaryResult.stdout}\n${primaryResult.stderr}`)
+    ) {
+      return yield* runCopilotCommand(binaryPath, ["--version"]).pipe(
+        Effect.timeoutOption(COPILOT_VERSION_TIMEOUT_MS),
+        Effect.result,
+      );
+    }
+  }
+
+  return primaryProbe;
+});
+
 export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus")(function* (
   resolveBinaryPath: () => string | undefined = resolveCopilotCliPath,
 ): Effect.fn.Return<
@@ -126,10 +158,7 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
   }
 
   const binaryPath = resolveBinaryPath() ?? "copilot";
-  const versionProbe = yield* runCopilotCommand(binaryPath, ["--version"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-    Effect.result,
-  );
+  const versionProbe = yield* probeCopilotVersion(binaryPath);
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;

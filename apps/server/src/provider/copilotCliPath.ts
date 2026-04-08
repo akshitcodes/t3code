@@ -44,6 +44,31 @@ function resolveExecutableRelativePath(packageJson: PackageJsonLike): string | u
   return typeof firstBin === "string" ? firstBin : undefined;
 }
 
+export function remapVirtualAsarPathToUnpacked(candidatePath: string): string {
+  return candidatePath.replace(/([\\/])app\.asar([\\/])/i, "$1app.asar.unpacked$2");
+}
+
+function preferExistingExecutablePath(candidatePath: string): string | undefined {
+  const unpackedPath = remapVirtualAsarPathToUnpacked(candidatePath);
+  if (unpackedPath !== candidatePath && existsSync(unpackedPath)) {
+    return unpackedPath;
+  }
+
+  return existsSync(candidatePath) ? candidatePath : undefined;
+}
+
+export function resolveCopilotExecutablePathFromPackageDir(packageDir: string): string | undefined {
+  const packageJson = readJson(join(packageDir, "package.json"));
+  const executableRelativePath = packageJson
+    ? resolveExecutableRelativePath(packageJson)
+    : undefined;
+  if (!executableRelativePath) {
+    return undefined;
+  }
+
+  return preferExistingExecutablePath(join(packageDir, executableRelativePath));
+}
+
 function findAncestorNamed(path: string, segmentName: string): string | undefined {
   let current = dirname(path);
   while (current !== dirname(current)) {
@@ -66,18 +91,34 @@ function findPackageRoot(startPath: string): string | undefined {
   return undefined;
 }
 
+function resolvePackagedPlatformCliPath(platformPackageName: string): string | undefined {
+  const resourcesPath = Reflect.get(process, "resourcesPath");
+  if (typeof resourcesPath !== "string" || resourcesPath.length === 0) {
+    return undefined;
+  }
+
+  const packageDir = join(resourcesPath, "app.asar.unpacked", "node_modules", ...platformPackageName.split("/"));
+  return resolveCopilotExecutablePathFromPackageDir(packageDir);
+}
+
 function resolveBundledPlatformCliPath(): string | undefined {
   const platformPackageName = resolveCopilotPlatformPackageName();
   if (!platformPackageName) {
     return undefined;
   }
 
+  const packagedPlatformPath = resolvePackagedPlatformCliPath(platformPackageName);
+  if (packagedPlatformPath) {
+    return packagedPlatformPath;
+  }
+
   const require = createRequire(import.meta.url);
 
   try {
     const directPlatformPath = require.resolve(platformPackageName);
-    if (existsSync(directPlatformPath)) {
-      return directPlatformPath;
+    const executablePath = preferExistingExecutablePath(directPlatformPath);
+    if (executablePath) {
+      return executablePath;
     }
   } catch {
     // Fall back to Bun store/package traversal below.
@@ -113,16 +154,8 @@ function resolveBundledPlatformCliPath(): string | undefined {
 
   for (const storeDir of candidateStoreDirs) {
     const packageDir = join(storeDir, "node_modules", ...platformPackageName.split("/"));
-    const packageJson = readJson(join(packageDir, "package.json"));
-    const executableRelativePath = packageJson
-      ? resolveExecutableRelativePath(packageJson)
-      : undefined;
-    if (!executableRelativePath) {
-      continue;
-    }
-
-    const executablePath = join(packageDir, executableRelativePath);
-    if (existsSync(executablePath)) {
+    const executablePath = resolveCopilotExecutablePathFromPackageDir(packageDir);
+    if (executablePath) {
       return executablePath;
     }
   }

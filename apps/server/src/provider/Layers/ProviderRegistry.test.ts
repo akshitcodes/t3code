@@ -525,6 +525,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             Layer.provideMerge(
               mockCommandSpawnerLayer((command, args) => {
                 const joined = args.join(" ");
+                if (joined === "version") {
+                  if (command === "copilot" || command === "copilot.exe") {
+                    return { stdout: "GitHub Copilot CLI 1.0.21\n", stderr: "", code: 0 };
+                  }
+                  return { stdout: "", stderr: "spawn ENOENT", code: 1 };
+                }
                 if (joined === "--version") {
                   if (command === "codex") {
                     return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
@@ -1072,7 +1078,42 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           Effect.provide(
             mockCommandSpawnerLayer((command, args) => {
               const joined = args.join(" ");
-              if (command === "copilot.exe" && joined === "--version") {
+              if (command === "copilot.exe" && joined === "version") {
+                return {
+                  stdout: "GitHub Copilot CLI 1.0.21.\n",
+                  stderr: "",
+                  code: 0,
+                };
+              }
+              throw new Error(`Unexpected command: ${command} ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("falls back to --version when version is unsupported", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCopilotProviderStatus(() => "copilot.exe");
+          assert.strictEqual(status.provider, "copilot");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.version, "1.0.21");
+          assert.strictEqual(status.auth.status, "unknown");
+        }).pipe(
+          Effect.provide(
+            mockCommandSpawnerLayer((command, args) => {
+              const joined = args.join(" ");
+              if (command !== "copilot.exe") {
+                throw new Error(`Unexpected command: ${command} ${joined}`);
+              }
+              if (joined === "version") {
+                return {
+                  stdout: "",
+                  stderr: "error: too many arguments. Expected 0 arguments but got 1.",
+                  code: 1,
+                };
+              }
+              if (joined === "--version") {
                 return {
                   stdout: "GitHub Copilot CLI 1.0.21.\n",
                   stderr: "",
