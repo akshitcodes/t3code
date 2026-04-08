@@ -850,14 +850,6 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
   updateInstallInFlight = true;
   clearUpdatePollTimer();
   try {
-    if (process.platform === "win32") {
-      isQuitting = true;
-      await stopBackendAndWaitForExit();
-      // NSIS installs more reliably when the running windows are already torn down.
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.destroy();
-      }
-    }
     // `quitAndInstall()` only starts the handoff to the updater. The actual
     // install may still fail asynchronously, so keep the action incomplete
     // until we either quit or receive an updater error.
