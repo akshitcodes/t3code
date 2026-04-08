@@ -87,6 +87,9 @@ type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 type LinuxDesktopNamedApp = Electron.App & {
   setDesktopName?: (desktopName: string) => void;
 };
+type MacBeforeQuitForUpdateEmitter = typeof autoUpdater & {
+  on(event: "before-quit-for-update", listener: () => void): unknown;
+};
 
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess.ChildProcess | null = null;
@@ -844,14 +847,16 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
     return { accepted: false, completed: false };
   }
 
-  isQuitting = true;
   updateInstallInFlight = true;
   clearUpdatePollTimer();
   try {
-    await stopBackendAndWaitForExit();
-    // Destroy all windows before launching the NSIS installer to avoid the installer finding live windows it needs to close.
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.destroy();
+    if (process.platform === "win32") {
+      isQuitting = true;
+      await stopBackendAndWaitForExit();
+      // NSIS installs more reliably when the running windows are already torn down.
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.destroy();
+      }
     }
     // `quitAndInstall()` only starts the handoff to the updater. The actual
     // install may still fail asynchronously, so keep the action incomplete
@@ -976,6 +981,12 @@ function configureAutoUpdater(): void {
   autoUpdater.on("update-downloaded", (info) => {
     setUpdateState(reduceDesktopUpdateStateOnDownloadComplete(updateState, info.version));
     console.info(`[desktop-updater] Update downloaded: ${info.version}`);
+  });
+  (autoUpdater as MacBeforeQuitForUpdateEmitter).on("before-quit-for-update", () => {
+    isQuitting = true;
+    clearUpdatePollTimer();
+    stopBackend();
+    console.info("[desktop-updater] Quitting to install update.");
   });
 
   clearUpdatePollTimer();
