@@ -73,6 +73,16 @@ function resolveBundledPlatformCliPath(): string | undefined {
   }
 
   const require = createRequire(import.meta.url);
+
+  try {
+    const directPlatformPath = require.resolve(platformPackageName);
+    if (existsSync(directPlatformPath)) {
+      return directPlatformPath;
+    }
+  } catch {
+    // Fall back to Bun store/package traversal below.
+  }
+
   let sdkEntryPath: string;
   try {
     sdkEntryPath = require.resolve("@github/copilot-sdk");
