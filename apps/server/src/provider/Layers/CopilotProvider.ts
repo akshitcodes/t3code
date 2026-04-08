@@ -1,30 +1,28 @@
-import {
-  CopilotClient,
-  type CopilotClientOptions,
-  type GetAuthStatusResponse,
-  type ModelInfo,
-} from "@github/copilot-sdk";
 import type {
+  CopilotSettings,
   ModelCapabilities,
   ServerProvider,
-  ServerProviderAuth,
   ServerProviderModel,
 } from "@t3tools/contracts";
-import { Data, Effect, Equal, Layer, Stream } from "effect";
+import { Effect, Equal, Layer, Option, Result, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import type { CopilotSettings } from "@t3tools/contracts";
 import { ServerSettingsService } from "../../serverSettings";
 import { resolveCopilotCliPath } from "../copilotCliPath";
 import { makeManagedServerProvider } from "../makeManagedServerProvider";
-import { buildServerProvider, providerModelsFromSettings } from "../providerSnapshot";
+import {
+  buildServerProvider,
+  DEFAULT_TIMEOUT_MS,
+  detailFromResult,
+  isCommandMissingCause,
+  parseGenericCliVersion,
+  providerModelsFromSettings,
+  spawnAndCollect,
+} from "../providerSnapshot";
 import { CopilotProvider } from "../Services/CopilotProvider";
+import { ServerSettingsError } from "@t3tools/contracts";
 
 const PROVIDER = "copilot" as const;
-
-class CopilotProbeError extends Data.TaggedError("CopilotProbeError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
 
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -80,72 +78,30 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
-function copilotClientOptions(): CopilotClientOptions {
+const runCopilotCommand = Effect.fn("runCopilotCommand")(function* (
+  binaryPath: string,
+  args: ReadonlyArray<string>,
+) {
   const sanitizedEnv = Object.fromEntries(
     Object.entries(process.env).filter(
       ([key, value]) => key !== "COPILOT_CLI_PATH" && typeof value === "string",
     ),
   );
-  const cliPath = resolveCopilotCliPath();
-
-  return {
-    logLevel: "error",
-    useStdio: true,
-    autoStart: true,
+  const command = ChildProcess.make(binaryPath, [...args], {
     env: sanitizedEnv,
-    ...(cliPath ? { cliPath } : {}),
-  };
-}
-
-function toMessage(cause: unknown, fallback: string): string {
-  return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
-}
-
-function toProbeError(cause: unknown, fallback: string): CopilotProbeError {
-  return new CopilotProbeError({
-    message: toMessage(cause, fallback),
-    cause,
+    // A resolved `.exe` launches directly; PATH lookups still use the shell on Windows.
+    shell: process.platform === "win32" && !binaryPath.toLowerCase().endsWith(".exe"),
   });
-}
+  return yield* spawnAndCollect(binaryPath, command);
+});
 
-function authMetadata(auth: GetAuthStatusResponse): Pick<ServerProviderAuth, "type" | "label"> {
-  const label =
-    auth.login && auth.host
-      ? `${auth.login} @ ${auth.host}`
-      : auth.login
-        ? auth.login
-        : auth.statusMessage;
-
-  return {
-    ...(auth.authType ? { type: auth.authType } : {}),
-    ...(label ? { label } : {}),
-  };
-}
-
-function toModelCapabilities(model: ModelInfo): ModelCapabilities {
-  return {
-    reasoningEffortLevels: (model.supportedReasoningEfforts ?? []).map((value) => ({
-      value,
-      label: value === "xhigh" ? "Extra High" : value.slice(0, 1).toUpperCase() + value.slice(1),
-      ...(model.defaultReasoningEffort === value ? { isDefault: true } : {}),
-    })),
-    supportsFastMode: false,
-    supportsThinkingToggle: false,
-    contextWindowOptions: [],
-    promptInjectedEffortLevels: [],
-  };
-}
-
-function toServerProviderModel(model: ModelInfo): ServerProviderModel {
-  return {
-    slug: model.id,
-    name: model.name,
-    isCustom: false,
-    capabilities: toModelCapabilities(model),
-  };
-}
-
-const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus")(function* () {
+export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus")(function* (
+  resolveBinaryPath: () => string | undefined = resolveCopilotCliPath,
+): Effect.fn.Return<
+  ServerProvider,
+  ServerSettingsError,
+  ChildProcessSpawner.ChildProcessSpawner | ServerSettingsService
+> {
   const serverSettings = yield* ServerSettingsService;
   const settings = yield* serverSettings.getSettings.pipe(
     Effect.map((allSettings) => allSettings.providers.copilot),
@@ -169,89 +125,94 @@ const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus")(funct
     });
   }
 
-  const client = new CopilotClient(copilotClientOptions());
-  const stopClient = Effect.tryPromise({
-    try: () => client.stop(),
-    catch: (cause) => toProbeError(cause, "Failed to stop GitHub Copilot SDK probe."),
-  }).pipe(Effect.catch(() => Effect.void));
+  const binaryPath = resolveBinaryPath() ?? "copilot";
+  const versionProbe = yield* runCopilotCommand(binaryPath, ["--version"]).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.result,
+  );
 
-  return yield* Effect.gen(function* () {
-    yield* Effect.tryPromise({
-      try: () => client.start(),
-      catch: (cause) => toProbeError(cause, "Failed to start GitHub Copilot SDK probe."),
-    });
-    const status = yield* Effect.tryPromise({
-      try: () => client.getStatus(),
-      catch: (cause) => toProbeError(cause, "Failed to read GitHub Copilot status."),
-    });
-    const auth = yield* Effect.tryPromise({
-      try: () => client.getAuthStatus(),
-      catch: (cause) =>
-        toProbeError(cause, "Failed to read GitHub Copilot authentication status."),
-    });
-    const listedModels = yield* Effect.tryPromise({
-      try: () => client.listModels(),
-      catch: (cause) => toProbeError(cause, "Failed to list GitHub Copilot models."),
-    }).pipe(
-      Effect.catch(() => Effect.succeed([] as Array<ModelInfo>)),
-    );
-    const models =
-      listedModels.length > 0
-        ? providerModelsFromSettings(
-            listedModels.map(toServerProviderModel),
-            PROVIDER,
-            settings.customModels,
-          )
-        : fallbackModels;
-
+  if (Result.isFailure(versionProbe)) {
+    const error = versionProbe.failure;
     return buildServerProvider({
       provider: PROVIDER,
       enabled: true,
       checkedAt,
-      models,
+      models: fallbackModels,
       probe: {
-        installed: true,
-        version: status.version,
-        status: auth.isAuthenticated ? "ready" : "error",
-        auth: {
-          status: auth.isAuthenticated ? "authenticated" : "unauthenticated",
-          ...authMetadata(auth),
-        },
-        ...(auth.isAuthenticated
-          ? {}
-          : {
-              message:
-                auth.statusMessage ??
-                "GitHub Copilot is not authenticated. Sign in to GitHub Copilot and try again.",
-            }),
+        installed: !isCommandMissingCause(error),
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: isCommandMissingCause(error)
+          ? "GitHub Copilot CLI could not be found."
+          : `Failed to execute GitHub Copilot CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
       },
     });
-  }).pipe(
-    Effect.ensuring(stopClient),
-    Effect.catch((error) =>
-      Effect.succeed(
-        buildServerProvider({
-          provider: PROVIDER,
-          enabled: true,
-          checkedAt,
-          models: fallbackModels,
-          probe: {
-            installed: false,
-            version: null,
-            status: "warning",
-            auth: { status: "unknown" },
-            message: `Failed to start GitHub Copilot SDK probe: ${error.message}`,
-          },
-        }),
-      ),
-    ),
-  );
+  }
+
+  if (Option.isNone(versionProbe.success)) {
+    return buildServerProvider({
+      provider: PROVIDER,
+      enabled: true,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message:
+          "GitHub Copilot CLI is installed but failed to run. Timed out while running command.",
+      },
+    });
+  }
+
+  const versionResult = versionProbe.success.value;
+  const parsedVersion = parseGenericCliVersion(`${versionResult.stdout}\n${versionResult.stderr}`);
+  if (versionResult.code !== 0) {
+    const detail = detailFromResult(versionResult);
+    return buildServerProvider({
+      provider: PROVIDER,
+      enabled: true,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unknown" },
+        message: detail
+          ? `GitHub Copilot CLI is installed but failed to run. ${detail}`
+          : "GitHub Copilot CLI is installed but failed to run.",
+      },
+    });
+  }
+
+  return buildServerProvider({
+    provider: PROVIDER,
+    enabled: true,
+    checkedAt,
+    models: fallbackModels,
+    probe: {
+      installed: true,
+      version: parsedVersion,
+      // Avoid bootstrapping the full SDK here; that path was crashing the packaged backend.
+      status: "ready",
+      auth: { status: "unknown" },
+      message: "Installed and available. Authentication is verified when a Copilot session starts.",
+    },
+  });
 });
 
 export const CopilotProviderLive = Layer.effect(
   CopilotProvider,
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const checkProvider = checkCopilotProviderStatus().pipe(
+      Effect.provideService(ServerSettingsService, serverSettings),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
 
     return yield* makeManagedServerProvider<CopilotSettings>({
       getSettings: serverSettings.getSettings.pipe(
@@ -262,7 +223,7 @@ export const CopilotProviderLive = Layer.effect(
         Stream.map((settings) => settings.providers.copilot),
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
-      checkProvider: checkCopilotProviderStatus().pipe(Effect.provideService(ServerSettingsService, serverSettings)),
+      checkProvider,
     });
   }),
 );

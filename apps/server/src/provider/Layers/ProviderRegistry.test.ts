@@ -30,6 +30,7 @@ import {
   readCodexConfigModelProvider,
 } from "./CodexProvider";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
+import { checkCopilotProviderStatus } from "./CopilotProvider";
 import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
 import { ProviderRegistry } from "../Services/ProviderRegistry";
@@ -1054,6 +1055,69 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         assert.strictEqual(parsed.status, "warning");
         assert.strictEqual(parsed.auth.status, "unknown");
       });
+    });
+
+    // ── checkCopilotProviderStatus tests ───────────────────────────
+
+    describe("checkCopilotProviderStatus", () => {
+      it.effect("returns ready when the Copilot CLI version probe succeeds", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCopilotProviderStatus(() => "copilot.exe");
+          assert.strictEqual(status.provider, "copilot");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.version, "1.0.21");
+          assert.strictEqual(status.auth.status, "unknown");
+        }).pipe(
+          Effect.provide(
+            mockCommandSpawnerLayer((command, args) => {
+              const joined = args.join(" ");
+              if (command === "copilot.exe" && joined === "--version") {
+                return {
+                  stdout: "GitHub Copilot CLI 1.0.21.\n",
+                  stderr: "",
+                  code: 0,
+                };
+              }
+              throw new Error(`Unexpected command: ${command} ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("returns unavailable when the Copilot CLI cannot be found", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCopilotProviderStatus(() => undefined);
+          assert.strictEqual(status.provider, "copilot");
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.installed, false);
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(status.message, "GitHub Copilot CLI could not be found.");
+        }).pipe(Effect.provide(failingSpawnerLayer("spawn copilot ENOENT"))),
+      );
+
+      it.effect("skips Copilot probes entirely when the provider is disabled", () =>
+        Effect.gen(function* () {
+          const serverSettingsLayer = ServerSettingsService.layerTest({
+            providers: {
+              copilot: {
+                enabled: false,
+              },
+            },
+          });
+
+          const status = yield* checkCopilotProviderStatus().pipe(
+            Effect.provide(
+              Layer.mergeAll(serverSettingsLayer, failingSpawnerLayer("spawn copilot ENOENT")),
+            ),
+          );
+          assert.strictEqual(status.provider, "copilot");
+          assert.strictEqual(status.enabled, false);
+          assert.strictEqual(status.status, "disabled");
+          assert.strictEqual(status.installed, false);
+          assert.strictEqual(status.message, "GitHub Copilot is disabled in T3 Code settings.");
+        }),
+      );
     });
   },
 );
