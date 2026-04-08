@@ -30,6 +30,7 @@ import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { showDesktopConfirmDialog } from "./confirmDialog";
+import { scheduleMacManualUpdateInstall } from "./macManualUpdate";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
@@ -78,6 +79,7 @@ const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const LOG_FILE_MAX_FILES = 10;
 const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
 const SERVER_SETTINGS_PATH = Path.join(STATE_DIR, "settings.json");
+const MAC_MANUAL_UPDATE_LOG_PATH = Path.join(LOG_DIR, "mac-manual-update.log");
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
@@ -323,6 +325,7 @@ let updateDownloadInFlight = false;
 let updateInstallInFlight = false;
 let updaterConfigured = false;
 let updateState: DesktopUpdateState = initialUpdateState();
+let downloadedUpdateFilePath: string | null = null;
 
 function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
   if (updateInstallInFlight) return "install";
@@ -830,7 +833,10 @@ async function downloadAvailableUpdate(): Promise<{ accepted: boolean; completed
   console.info("[desktop-updater] Downloading update...");
 
   try {
-    await autoUpdater.downloadUpdate();
+    const downloadedFiles = await autoUpdater.downloadUpdate();
+    if (process.platform === "darwin") {
+      downloadedUpdateFilePath = downloadedFiles[0] ?? downloadedUpdateFilePath;
+    }
     return { accepted: true, completed: true };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
@@ -853,6 +859,25 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
   updateInstallInFlight = true;
   clearUpdatePollTimer();
   try {
+    if (process.platform === "darwin") {
+      if (!downloadedUpdateFilePath) {
+        throw new Error("Downloaded Mac update archive was not found.");
+      }
+      console.info(`[desktop-updater] Scheduling manual Mac install from ${downloadedUpdateFilePath}.`);
+      await scheduleMacManualUpdateInstall({
+        appPid: process.pid,
+        executablePath: app.getPath("exe"),
+        downloadedFile: downloadedUpdateFilePath,
+        logFile: MAC_MANUAL_UPDATE_LOG_PATH,
+      });
+      setTimeout(() => {
+        console.info("[desktop-updater] Quitting app for manual Mac update.");
+        isQuitting = true;
+        app.quit();
+      }, 250).unref();
+      return { accepted: true, completed: false };
+    }
+
     console.info(
       `[desktop-updater] Scheduling install for downloaded update ${updateState.downloadedVersion ?? updateState.availableVersion ?? "unknown"}.`,
     );
@@ -930,6 +955,7 @@ function configureAutoUpdater(): void {
     console.info("[desktop-updater] Looking for updates...");
   });
   autoUpdater.on("update-available", (info) => {
+    downloadedUpdateFilePath = null;
     setUpdateState(
       reduceDesktopUpdateStateOnUpdateAvailable(
         updateState,
@@ -941,6 +967,7 @@ function configureAutoUpdater(): void {
     console.info(`[desktop-updater] Update available: ${info.version}`);
   });
   autoUpdater.on("update-not-available", () => {
+    downloadedUpdateFilePath = null;
     setUpdateState(reduceDesktopUpdateStateOnNoUpdate(updateState, new Date().toISOString()));
     lastLoggedDownloadMilestone = -1;
     console.info("[desktop-updater] No updates available.");
@@ -981,6 +1008,7 @@ function configureAutoUpdater(): void {
     }
   });
   autoUpdater.on("update-downloaded", (info) => {
+    downloadedUpdateFilePath = info.downloadedFile;
     setUpdateState(reduceDesktopUpdateStateOnDownloadComplete(updateState, info.version));
     console.info(`[desktop-updater] Update downloaded: ${info.version}`);
   });
