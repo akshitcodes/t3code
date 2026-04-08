@@ -844,16 +844,25 @@ async function downloadAvailableUpdate(): Promise<{ accepted: boolean; completed
 
 async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed: boolean }> {
   if (isQuitting || !updaterConfigured || updateState.status !== "downloaded") {
+    console.info(
+      `[desktop-updater] Ignoring install request isQuitting=${String(isQuitting)} updaterConfigured=${String(updaterConfigured)} status=${updateState.status}.`,
+    );
     return { accepted: false, completed: false };
   }
 
   updateInstallInFlight = true;
   clearUpdatePollTimer();
   try {
+    console.info(
+      `[desktop-updater] Scheduling install for downloaded update ${updateState.downloadedVersion ?? updateState.availableVersion ?? "unknown"}.`,
+    );
     // `quitAndInstall()` only starts the handoff to the updater. The actual
     // install may still fail asynchronously, so keep the action incomplete
     // until we either quit or receive an updater error.
-    autoUpdater.quitAndInstall(true, true);
+    setTimeout(() => {
+      console.info("[desktop-updater] Invoking quitAndInstall().");
+      autoUpdater.quitAndInstall(false, true);
+    }, 500).unref();
     return { accepted: true, completed: false };
   } catch (error: unknown) {
     const message = formatErrorMessage(error);
@@ -903,6 +912,7 @@ function configureAutoUpdater(): void {
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.disableWebInstaller = true;
   // Keep alpha branding, but force all installs onto the stable update track.
   autoUpdater.channel = DESKTOP_UPDATE_CHANNEL;
   autoUpdater.allowPrerelease = DESKTOP_UPDATE_ALLOW_PRERELEASE;
@@ -1303,12 +1313,14 @@ function registerIpcHandlers(): void {
   ipcMain.removeHandler(UPDATE_INSTALL_CHANNEL);
   ipcMain.handle(UPDATE_INSTALL_CHANNEL, async () => {
     if (isQuitting) {
+      console.info("[desktop-updater] Ignoring install IPC because app is already quitting.");
       return {
         accepted: false,
         completed: false,
         state: updateState,
       } satisfies DesktopUpdateActionResult;
     }
+    console.info(`[desktop-updater] Received install IPC with status=${updateState.status}.`);
     const result = await installDownloadedUpdate();
     return {
       accepted: result.accepted,
