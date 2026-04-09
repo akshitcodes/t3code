@@ -1,4 +1,5 @@
 import * as ChildProcess from "node:child_process";
+import * as SyncFS from "node:fs";
 import * as FS from "node:fs/promises";
 import * as Path from "node:path";
 import * as OS from "node:os";
@@ -10,7 +11,7 @@ export function resolveMacAppBundlePath(executablePath: string): string | null {
 }
 
 function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 export function buildMacManualUpdateScript(input: {
@@ -19,11 +20,13 @@ export function buildMacManualUpdateScript(input: {
   targetAppPath: string;
   downloadedFile: string;
   logFile: string;
+  readyFile: string;
 }): string {
   const scriptPath = shellSingleQuote(input.scriptPath);
   const targetAppPath = shellSingleQuote(input.targetAppPath);
   const downloadedFile = shellSingleQuote(input.downloadedFile);
   const logFile = shellSingleQuote(input.logFile);
+  const readyFile = shellSingleQuote(input.readyFile);
 
   return `#!/bin/bash
 set -euo pipefail
@@ -33,13 +36,19 @@ APP_PID=${input.appPid}
 TARGET_APP=${targetAppPath}
 UPDATE_FILE=${downloadedFile}
 LOG_FILE=${logFile}
+READY_FILE=${readyFile}
 TARGET_PARENT="$(/usr/bin/dirname "$TARGET_APP")"
 TMP_ROOT="$(/usr/bin/mktemp -d "\${TMPDIR:-/tmp}/t3code-manual-update.XXXXXX")"
 EXTRACT_DIR="$TMP_ROOT/extracted"
 
 log() {
   /bin/mkdir -p "$(/usr/bin/dirname "$LOG_FILE")"
-  /bin/printf '[%s] %s\\n' "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$LOG_FILE"
+  /usr/bin/printf '[%s] %s\\n' "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$LOG_FILE"
+}
+
+mark_ready() {
+  /bin/mkdir -p "$(/usr/bin/dirname "$READY_FILE")"
+  /usr/bin/touch "$READY_FILE"
 }
 
 cleanup() {
@@ -72,6 +81,7 @@ install_update() {
 
 wait_for_app_exit() {
   local attempts=0
+  log "Waiting for app process $APP_PID to exit"
   while /bin/kill -0 "$APP_PID" >/dev/null 2>&1; do
     attempts=$((attempts + 1))
     if (( attempts > 180 )); then
@@ -80,11 +90,13 @@ wait_for_app_exit() {
     fi
     /bin/sleep 1
   done
+  log "Observed app process $APP_PID exit"
   return 0
 }
 
 run_install() {
   if [[ -w "$TARGET_PARENT" ]]; then
+    log "Installing update without administrator privileges"
     install_update
     return 0
   fi
@@ -101,6 +113,7 @@ if [[ "\${1:-}" == "--install" ]]; then
 fi
 
 log "Manual Mac update helper started for $TARGET_APP"
+mark_ready
 wait_for_app_exit
 run_install
 log "Relaunching updated app bundle"
@@ -125,12 +138,14 @@ export async function scheduleMacManualUpdateInstall(input: {
 
   const helperDir = await FS.mkdtemp(Path.join(OS.tmpdir(), "t3code-mac-update-"));
   const helperPath = Path.join(helperDir, "install-update.sh");
+  const readyPath = Path.join(helperDir, "helper-ready");
   const script = buildMacManualUpdateScript({
     scriptPath: helperPath,
     appPid: input.appPid,
     targetAppPath,
     downloadedFile: input.downloadedFile,
     logFile: input.logFile,
+    readyFile: readyPath,
   });
 
   await FS.writeFile(helperPath, script, { encoding: "utf8", mode: 0o700 });
@@ -140,5 +155,62 @@ export async function scheduleMacManualUpdateInstall(input: {
     detached: true,
     stdio: "ignore",
   });
+
+  await waitForMacManualUpdateHelperReady(child, readyPath);
   child.unref();
+}
+
+async function waitForMacManualUpdateHelperReady(
+  child: ChildProcess.ChildProcess,
+  readyPath: string,
+): Promise<void> {
+  const timeoutMs = 5_000;
+  const pollIntervalMs = 50;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let poll: ReturnType<typeof setInterval> | null = null;
+
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      child.off("error", onError);
+      child.off("exit", onExit);
+      if (timeout) clearTimeout(timeout);
+      if (poll) clearInterval(poll);
+      callback();
+    };
+
+    const onError = (error: Error) => {
+      settle(() => reject(error));
+    };
+
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      settle(() =>
+        reject(
+          new Error(
+            `Mac update helper exited before acknowledging startup (code=${code ?? "null"} signal=${signal ?? "null"}).`,
+          ),
+        ),
+      );
+    };
+
+    const checkReady = () => {
+      if (!SyncFS.existsSync(readyPath)) return;
+      settle(resolve);
+    };
+
+    child.once("error", onError);
+    child.once("exit", onExit);
+    poll = setInterval(checkReady, pollIntervalMs);
+    timeout = setTimeout(() => {
+      settle(() =>
+        reject(
+          new Error(`Timed out waiting for Mac update helper readiness signal at ${readyPath}.`),
+        ),
+      );
+    }, timeoutMs);
+    checkReady();
+  });
 }
