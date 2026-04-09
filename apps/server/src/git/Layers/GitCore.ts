@@ -74,6 +74,7 @@ interface ExecuteGitOptions {
   maxOutputBytes?: number | undefined;
   truncateOutputAtMaxBytes?: boolean | undefined;
   progress?: ExecuteGitProgress | undefined;
+  env?: NodeJS.ProcessEnv | undefined;
 }
 
 function parseBranchAb(value: string): { ahead: number; behind: number } {
@@ -235,6 +236,33 @@ function normalizeRemoteUrl(value: string): string {
     .replace(/\/+$/g, "")
     .replace(/\.git$/i, "")
     .toLowerCase();
+}
+
+function isLocalGitRemoteUrl(value: string | null): boolean {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return false;
+  }
+  if (trimmed.startsWith("file://")) {
+    return true;
+  }
+  if (/^(?:ssh|https?|git):\/\//i.test(trimmed)) {
+    return false;
+  }
+  if (/^[^\s@]+@[^:]+:.+$/i.test(trimmed)) {
+    return false;
+  }
+  return true;
+}
+
+function createFastFailureGitEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: process.env.GIT_TERMINAL_PROMPT ?? "0",
+    GIT_SSH_COMMAND:
+      process.env.GIT_SSH_COMMAND ??
+      "ssh -o BatchMode=yes -o ConnectTimeout=1 -o ConnectionAttempts=1",
+  };
 }
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
@@ -777,6 +805,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
         ? { truncateOutputAtMaxBytes: options.truncateOutputAtMaxBytes }
         : {}),
       ...(options.progress ? { progress: options.progress } : {}),
+      ...(options.env ? { env: options.env } : {}),
     }).pipe(
       Effect.flatMap((result) => {
         if (options.allowNonZeroExit || result.code === 0) {
@@ -890,6 +919,12 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     );
   });
 
+  const readConfigValueNullable = (cwd: string, key: string) =>
+    runGitStdout("GitCore.readConfigValue", cwd, ["config", "--get", key], true).pipe(
+      Effect.map((stdout) => stdout.trim()),
+      Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
+    );
+
   const fetchUpstreamRefForStatus = (
     gitCommonDir: string,
     upstream: { upstreamRef: string; remoteName: string; upstreamBranch: string },
@@ -904,6 +939,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       {
         allowNonZeroExit: true,
         timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+        env: createFastFailureGitEnv(),
       },
     ).pipe(Effect.asVoid);
   };
@@ -942,6 +978,13 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   ) {
     const upstream = yield* resolveCurrentUpstream(cwd);
     if (!upstream) return;
+    const upstreamRemoteUrl = yield* readConfigValueNullable(
+      cwd,
+      `remote.${upstream.remoteName}.url`,
+    ).pipe(Effect.catch(() => Effect.succeed(null)));
+    if (upstreamRemoteUrl !== null && !isLocalGitRemoteUrl(upstreamRemoteUrl)) {
+      return;
+    }
     const gitCommonDir = yield* resolveGitCommonDir(cwd);
     yield* Cache.get(
       statusUpstreamRefreshCache,
@@ -1594,10 +1637,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   );
 
   const readConfigValue: GitCoreShape["readConfigValue"] = (cwd, key) =>
-    runGitStdout("GitCore.readConfigValue", cwd, ["config", "--get", key], true).pipe(
-      Effect.map((stdout) => stdout.trim()),
-      Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
-    );
+    readConfigValueNullable(cwd, key);
 
   const isInsideWorkTree: GitCoreShape["isInsideWorkTree"] = (cwd) =>
     executeGit("GitCore.isInsideWorkTree", cwd, ["rev-parse", "--is-inside-work-tree"], {
