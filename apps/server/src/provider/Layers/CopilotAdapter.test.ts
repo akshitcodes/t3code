@@ -96,17 +96,6 @@ function makeHarness() {
   };
 }
 
-function makeSessionIdleEvent(id: string): SessionEvent {
-  return {
-    id,
-    type: "session.idle",
-    timestamp: new Date().toISOString(),
-    data: {
-      aborted: false,
-    },
-  } as SessionEvent;
-}
-
 function makeSessionErrorEvent(message: string): SessionEvent {
   return {
     id: "evt-session-error",
@@ -119,7 +108,7 @@ function makeSessionErrorEvent(message: string): SessionEvent {
 }
 
 describe("CopilotAdapter", () => {
-  it("waits for startup idle before sending the first turn and sets the model lazily", async () => {
+  it("sends the first turn immediately and sets the model lazily", async () => {
     const harness = makeHarness();
 
     try {
@@ -154,11 +143,6 @@ describe("CopilotAdapter", () => {
       );
 
       await Promise.resolve();
-      assert.equal(harness.session.setModel.mock.calls.length, 0);
-      assert.equal(harness.session.send.mock.calls.length, 0);
-
-      harness.session.emit(makeSessionIdleEvent("evt-session-idle"));
-
       await sendPromise;
 
       assert.deepEqual(harness.session.setModel.mock.calls[0]?.[0], "gpt-5.4-mini");
@@ -188,7 +172,9 @@ describe("CopilotAdapter", () => {
         }),
       );
 
-      const sendPromise = harness.runtime.runPromiseExit(
+      harness.session.emit(makeSessionErrorEvent(modelUnavailable));
+
+      const exit = await harness.runtime.runPromiseExit(
         adapter.sendTurn({
           threadId,
           input: "hello",
@@ -198,11 +184,6 @@ describe("CopilotAdapter", () => {
           },
         }),
       );
-
-      await Promise.resolve();
-      harness.session.emit(makeSessionErrorEvent(modelUnavailable));
-
-      const exit = await sendPromise;
       assert.equal(exit._tag, "Failure");
       const error = Cause.squash(exit.cause);
       assert.ok(Schema.is(ProviderAdapterRequestError)(error));

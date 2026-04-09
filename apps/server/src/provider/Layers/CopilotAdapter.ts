@@ -25,7 +25,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { Duration, Effect, FileSystem, Layer, Queue, Random, Stream } from "effect";
+import { Effect, FileSystem, Layer, Queue, Random, Stream } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -40,8 +40,6 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 import { CopilotAdapter, type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
 
 const PROVIDER = "copilot" as const;
-const SESSION_READY_TIMEOUT = Duration.seconds(30);
-
 interface CopilotReplayTurn {
   readonly input?: string;
   readonly attachments?: Array<ChatAttachment>;
@@ -395,10 +393,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     context.resolveStartupReady();
   };
 
-  const waitForStartupReady = (context: CopilotSessionContext, method: string) => {
-    if (context.startupState === "ready") {
-      return Effect.void;
-    }
+  const ensureStartupDidNotFail = (context: CopilotSessionContext, method: string) => {
     if (context.startupState === "failed") {
       return Effect.fail(
         new ProviderAdapterRequestError({
@@ -412,35 +407,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }),
       );
     }
-    return Effect.promise(() => context.startupReadyPromise).pipe(
-      Effect.flatMap(() =>
-        context.startupState === "ready"
-          ? Effect.void
-          : Effect.fail(
-              new ProviderAdapterRequestError({
-                provider: PROVIDER,
-                method,
-                detail: toMessage(
-                  context.startupFailure,
-                  "GitHub Copilot session startup failed before the first turn could be sent.",
-                ),
-                cause: context.startupFailure,
-              }),
-            ),
-      ),
-      Effect.timeoutOrElse({
-        duration: SESSION_READY_TIMEOUT,
-        orElse: () =>
-          Effect.fail(
-            new ProviderAdapterRequestError({
-              provider: PROVIDER,
-              method,
-              detail:
-                "Timed out waiting for GitHub Copilot session startup before sending the first turn.",
-            }),
-          ),
-      }),
-    );
+    return Effect.void;
   };
 
   const updateSessionState = (context: CopilotSessionContext, patch: Partial<ProviderSession>) => {
@@ -565,6 +532,24 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       };
 
       switch (event.type) {
+        case "session.start":
+        case "session.resume":
+          markStartupReady(context);
+          if (!context.turnState) {
+            updateSessionState(context, {
+              status: "ready",
+              activeTurnId: undefined,
+              lastError: undefined,
+              ...(context.currentModel ? { model: context.currentModel } : {}),
+            });
+            yield* offerRuntimeEvent({
+              ...base,
+              type: "session.state.changed",
+              payload: { state: "ready" },
+              raw: { source: "copilot.sdk.event", method: event.type, payload: event },
+            });
+          }
+          return;
         case "session.warning":
         case "session.info":
           yield* offerRuntimeEvent({
@@ -1217,7 +1202,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
   const sendTurn: CopilotAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
-    yield* waitForStartupReady(context, "turn/start");
+    yield* ensureStartupDidNotFail(context, "turn/start");
     if (context.turnState && !context.turnState.completed) {
       yield* completeTurn(context, "completed");
     }
