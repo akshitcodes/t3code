@@ -18,7 +18,6 @@ import {
   type ModelSelection,
   ProviderItemId,
   type ProviderRuntimeEvent,
-  type ProviderSendTurnInput,
   type ProviderSession,
   RuntimeItemId,
   RuntimeRequestId,
@@ -26,7 +25,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { Effect, FileSystem, Layer, Queue, Random, Stream } from "effect";
+import { Duration, Effect, FileSystem, Layer, Queue, Random, Stream } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -41,6 +40,7 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 import { CopilotAdapter, type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
 
 const PROVIDER = "copilot" as const;
+const SESSION_READY_TIMEOUT = Duration.seconds(30);
 
 interface CopilotReplayTurn {
   readonly input?: string;
@@ -89,6 +89,10 @@ interface CopilotSessionContext {
   turnState: CopilotTurnState | undefined;
   currentMode: "interactive" | "plan";
   currentModel: string | undefined;
+  startupState: "pending" | "ready" | "failed";
+  startupFailure: unknown | undefined;
+  readonly startupReadyPromise: Promise<void>;
+  resolveStartupReady: () => void;
   stopped: boolean;
   unsubscribe: (() => void) | undefined;
 }
@@ -295,10 +299,7 @@ function buildClientOptions(cwd?: string): CopilotClientOptions {
   };
 }
 
-function toPendingApproval(
-  request: PermissionRequest,
-  approval: ApprovalPromise,
-): PendingApproval {
+function toPendingApproval(request: PermissionRequest, approval: ApprovalPromise): PendingApproval {
   const detail = summarizePermissionRequest(request);
   return {
     requestType: classifyPermissionRequest(request),
@@ -347,15 +348,99 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     );
 
   const createApprovalPromise = (): ApprovalPromise => {
-    let resolveDecision: ((decision: "accept" | "acceptForSession" | "decline" | "cancel") => void) | undefined;
-    const decision = new Promise<"accept" | "acceptForSession" | "decline" | "cancel">((resolve) => {
-      resolveDecision = resolve;
-    });
+    let resolveDecision:
+      | ((decision: "accept" | "acceptForSession" | "decline" | "cancel") => void)
+      | undefined;
+    const decision = new Promise<"accept" | "acceptForSession" | "decline" | "cancel">(
+      (resolve) => {
+        resolveDecision = resolve;
+      },
+    );
     return {
       decision,
       resolve: (value: "accept" | "acceptForSession" | "decline" | "cancel") =>
         resolveDecision?.(value),
     };
+  };
+
+  const createDeferred = (): {
+    readonly promise: Promise<void>;
+    resolve: () => void;
+  } => {
+    let resolvePromise: (() => void) | undefined;
+    const promise = new Promise<void>((resolve) => {
+      resolvePromise = resolve;
+    });
+    return {
+      promise,
+      resolve: () => resolvePromise?.(),
+    };
+  };
+
+  const markStartupReady = (context: CopilotSessionContext) => {
+    if (context.startupState !== "pending") {
+      return;
+    }
+    context.startupState = "ready";
+    context.startupFailure = undefined;
+    context.resolveStartupReady();
+  };
+
+  const markStartupFailed = (context: CopilotSessionContext, cause: unknown) => {
+    if (context.startupState !== "pending") {
+      return;
+    }
+    context.startupState = "failed";
+    context.startupFailure = cause;
+    context.resolveStartupReady();
+  };
+
+  const waitForStartupReady = (context: CopilotSessionContext, method: string) => {
+    if (context.startupState === "ready") {
+      return Effect.void;
+    }
+    if (context.startupState === "failed") {
+      return Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method,
+          detail: toMessage(
+            context.startupFailure,
+            "GitHub Copilot session startup failed before the first turn could be sent.",
+          ),
+          cause: context.startupFailure,
+        }),
+      );
+    }
+    return Effect.promise(() => context.startupReadyPromise).pipe(
+      Effect.flatMap(() =>
+        context.startupState === "ready"
+          ? Effect.void
+          : Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method,
+                detail: toMessage(
+                  context.startupFailure,
+                  "GitHub Copilot session startup failed before the first turn could be sent.",
+                ),
+                cause: context.startupFailure,
+              }),
+            ),
+      ),
+      Effect.timeoutOrElse({
+        duration: SESSION_READY_TIMEOUT,
+        orElse: () =>
+          Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method,
+              detail:
+                "Timed out waiting for GitHub Copilot session startup before sending the first turn.",
+            }),
+          ),
+      }),
+    );
   };
 
   const updateSessionState = (context: CopilotSessionContext, patch: Partial<ProviderSession>) => {
@@ -420,7 +505,10 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     } satisfies MessageOptions;
   });
 
-  const completeTurn = (context: CopilotSessionContext, state: "completed" | "interrupted" | "failed") =>
+  const completeTurn = (
+    context: CopilotSessionContext,
+    state: "completed" | "interrupted" | "failed",
+  ) =>
     Effect.gen(function* () {
       const turnState = context.turnState;
       if (!turnState || turnState.completed) {
@@ -490,6 +578,13 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           });
           return;
         case "session.error":
+          updateSessionState(context, {
+            status: "error",
+            activeTurnId: undefined,
+            lastError: event.data.message,
+            ...(context.currentModel ? { model: context.currentModel } : {}),
+          });
+          markStartupFailed(context, new Error(event.data.message));
           yield* offerRuntimeEvent({
             ...base,
             type: "runtime.error",
@@ -505,6 +600,15 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           }
           return;
         case "session.idle":
+          if (!context.turnState) {
+            updateSessionState(context, {
+              status: "ready",
+              activeTurnId: undefined,
+              lastError: undefined,
+              ...(context.currentModel ? { model: context.currentModel } : {}),
+            });
+          }
+          markStartupReady(context);
           if (context.turnState) {
             yield* completeTurn(context, event.data.aborted ? "interrupted" : "completed");
           }
@@ -807,6 +911,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       ((clientOptions?: CopilotClientOptions) => new CopilotClient(clientOptions));
     const client = createClient(buildClientOptions(input.cwd));
     const contextRef: { current?: CopilotSessionContext } = {};
+    const startupReady = createDeferred();
     const sessionConfig: SessionConfig = {
       onPermissionRequest:
         input.runtimeMode === "full-access"
@@ -896,10 +1001,6 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             },
       streaming: true,
       ...(input.cwd ? { workingDirectory: input.cwd } : {}),
-      ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
-      ...(input.modelSelection?.options?.reasoningEffort
-        ? { reasoningEffort: input.modelSelection.options.reasoningEffort }
-        : {}),
     };
 
     const copilotSession = yield* Effect.tryPromise({
@@ -919,11 +1020,10 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     const context: CopilotSessionContext = {
       session: {
         provider: PROVIDER,
-        status: "ready",
+        status: "connecting",
         runtimeMode: input.runtimeMode,
         threadId: input.threadId,
         ...(input.cwd ? { cwd: input.cwd } : {}),
-        ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
         resumeCursor: {
           sessionId: copilotSession.sessionId,
           turns: [...(input.resumeCursor?.turns ?? [])],
@@ -941,7 +1041,11 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       })),
       turnState: undefined,
       currentMode: "interactive",
-      currentModel: input.modelSelection?.model,
+      currentModel: undefined,
+      startupState: "pending",
+      startupFailure: undefined,
+      startupReadyPromise: startupReady.promise,
+      resolveStartupReady: startupReady.resolve,
       stopped: false,
       unsubscribe: undefined,
     };
@@ -966,19 +1070,8 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       createdAt: nowIso(),
       type: "session.configured",
       payload: {
-        config: {
-          ...(input.cwd ? { cwd: input.cwd } : {}),
-          ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
-        },
+        config: input.cwd ? { cwd: input.cwd } : {},
       },
-    });
-    yield* offerRuntimeEvent({
-      eventId: makeEventId(),
-      provider: PROVIDER,
-      threadId: input.threadId,
-      createdAt: nowIso(),
-      type: "session.state.changed",
-      payload: { state: "ready" },
     });
     yield* offerRuntimeEvent({
       eventId: makeEventId(),
@@ -1031,11 +1124,12 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       if (replayModelSelection) {
         yield* Effect.tryPromise({
           try: () =>
-            context.copilotSession.setModel(replayModelSelection.model, {
-              ...(replayModelSelection.options?.reasoningEffort
+            context.copilotSession.setModel(
+              replayModelSelection.model,
+              replayModelSelection.options?.reasoningEffort
                 ? { reasoningEffort: replayModelSelection.options.reasoningEffort }
-                : {}),
-            }),
+                : undefined,
+            ),
           catch: (cause) =>
             new ProviderAdapterRequestError({
               provider: PROVIDER,
@@ -1064,6 +1158,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         replay: replayTurn,
       });
     }
+    markStartupReady(context);
     updateSessionState(context, { status: "ready", activeTurnId: undefined });
   });
 
@@ -1094,34 +1189,35 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }
     });
 
-  const startSession: CopilotAdapterShape["startSession"] = Effect.fn("startSession")(function* (
-    input,
-  ) {
-    if (input.provider !== undefined && input.provider !== PROVIDER) {
-      return yield* new ProviderAdapterValidationError({
-        provider: PROVIDER,
-        operation: "startSession",
-        issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+  const startSession: CopilotAdapterShape["startSession"] = Effect.fn("startSession")(
+    function* (input) {
+      if (input.provider !== undefined && input.provider !== PROVIDER) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "startSession",
+          issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+        });
+      }
+
+      const resumeCursor = readResumeCursor(input.resumeCursor);
+      const modelSelection = isCopilotModelSelection(input.modelSelection)
+        ? input.modelSelection
+        : undefined;
+
+      const context = yield* createRuntimeContext({
+        threadId: input.threadId,
+        ...(input.cwd ? { cwd: input.cwd } : {}),
+        runtimeMode: input.runtimeMode,
+        ...(modelSelection ? { modelSelection } : {}),
+        ...(resumeCursor ? { resumeCursor } : {}),
       });
-    }
-
-    const resumeCursor = readResumeCursor(input.resumeCursor);
-    const modelSelection = isCopilotModelSelection(input.modelSelection)
-      ? input.modelSelection
-      : undefined;
-
-    const context = yield* createRuntimeContext({
-      threadId: input.threadId,
-      ...(input.cwd ? { cwd: input.cwd } : {}),
-      runtimeMode: input.runtimeMode,
-      ...(modelSelection ? { modelSelection } : {}),
-      ...(resumeCursor ? { resumeCursor } : {}),
-    });
-    return context.session;
-  });
+      return context.session;
+    },
+  );
 
   const sendTurn: CopilotAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
+    yield* waitForStartupReady(context, "turn/start");
     if (context.turnState && !context.turnState.completed) {
       yield* completeTurn(context, "completed");
     }
@@ -1132,11 +1228,12 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     if (modelSelection?.model && modelSelection.model !== context.currentModel) {
       yield* Effect.tryPromise({
         try: () =>
-          context.copilotSession.setModel(modelSelection.model, {
-            ...(modelSelection.options?.reasoningEffort
+          context.copilotSession.setModel(
+            modelSelection.model,
+            modelSelection.options?.reasoningEffort
               ? { reasoningEffort: modelSelection.options.reasoningEffort }
-              : {}),
-          }),
+              : undefined,
+          ),
         catch: (cause) =>
           new ProviderAdapterRequestError({
             provider: PROVIDER,
@@ -1199,9 +1296,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       createdAt: nowIso(),
       turnId,
       type: "turn.started",
-      payload: {
-        ...(context.currentModel ? { model: context.currentModel } : {}),
-      },
+      payload: context.currentModel ? { model: context.currentModel } : {},
     });
     yield* offerRuntimeEvent({
       eventId: makeEventId(),
@@ -1303,7 +1398,11 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       };
     });
 
-  const respondToRequest: CopilotAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
+  const respondToRequest: CopilotAdapterShape["respondToRequest"] = (
+    threadId,
+    requestId,
+    decision,
+  ) =>
     requireSession(threadId).pipe(
       Effect.flatMap((context) => {
         const pending = context.pendingApprovals.get(requestId);
