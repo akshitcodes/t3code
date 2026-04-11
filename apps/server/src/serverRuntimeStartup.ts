@@ -1,6 +1,10 @@
+import { homedir } from "node:os";
+import nodePath from "node:path";
+
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_MODEL_BY_PROVIDER,
   type ModelSelection,
   ProjectId,
   ThreadId,
@@ -25,6 +29,15 @@ import { Open } from "./open";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
+import { ProviderSessionRuntimeRepository } from "./persistence/Services/ProviderSessionRuntime";
+import {
+  claudePermissionModeToInteractionMode,
+  claudePermissionModeToRuntimeMode,
+  claudeSessionToModelSelection,
+  discoverClaudeNativeSessions,
+  normalizeWorkspaceRootForLookup,
+  readClaudeSessionIdFromResumeCursor,
+} from "./provider/claudeNativeSessions";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerSettingsService } from "./serverSettings";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
@@ -228,6 +241,192 @@ const autoBootstrapWelcome = Effect.gen(function* () {
   } as const;
 });
 
+const importClaudeNativeSessions = Effect.gen(function* () {
+  const serverSettings = yield* ServerSettingsService;
+  const settings = yield* serverSettings.getSettings;
+  if (!settings.providers.claudeAgent.enabled) {
+    return {
+      discovered: 0,
+      imported: 0,
+      skipped: 0,
+      projectsCreated: 0,
+      reason: "provider-disabled",
+    } as const;
+  }
+
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const orchestrationEngine = yield* OrchestrationEngineService;
+  const providerSessionRuntimeRepository = yield* ProviderSessionRuntimeRepository;
+
+  const projectsRoot = nodePath.join(homedir(), ".claude", "projects");
+  const discovered = yield* Effect.tryPromise({
+    try: () => discoverClaudeNativeSessions(projectsRoot),
+    catch: (cause) =>
+      new ServerRuntimeStartupError({
+        message: `Failed to scan Claude native sessions under '${projectsRoot}'.`,
+        cause,
+      }),
+  });
+
+  if (discovered.length === 0) {
+    return {
+      discovered: 0,
+      imported: 0,
+      skipped: 0,
+      projectsCreated: 0,
+      reason: "no-native-sessions",
+    } as const;
+  }
+
+  const existingRuntimeBindings = yield* providerSessionRuntimeRepository.list().pipe(
+    Effect.mapError((cause) =>
+      new ServerRuntimeStartupError({
+        message: "Failed to read persisted provider runtime bindings.",
+        cause,
+      }),
+    ),
+  );
+  const existingClaudeSessionIds = new Set(
+    existingRuntimeBindings
+      .filter((binding) => binding.providerName === "claudeAgent")
+      .flatMap((binding) => {
+        const sessionId = readClaudeSessionIdFromResumeCursor(binding.resumeCursor);
+        return sessionId ? [sessionId] : [];
+      }),
+  );
+
+  const snapshot = yield* projectionSnapshotQuery.getSnapshot().pipe(
+    Effect.mapError((cause) =>
+      new ServerRuntimeStartupError({
+        message: "Failed to read orchestration snapshot before Claude session import.",
+        cause,
+      }),
+    ),
+  );
+
+  const activeProjectsByWorkspaceRoot = new Map(
+    snapshot.projects
+      .filter((project) => project.deletedAt === null)
+      .map((project) => [normalizeWorkspaceRootForLookup(project.workspaceRoot), project] as const),
+  );
+
+  let imported = 0;
+  let skipped = 0;
+  let projectsCreated = 0;
+
+  for (const session of discovered) {
+    if (existingClaudeSessionIds.has(session.sessionId)) {
+      skipped += 1;
+      continue;
+    }
+
+    const normalizedWorkspaceRoot = normalizeWorkspaceRootForLookup(session.cwd);
+    let project = activeProjectsByWorkspaceRoot.get(normalizedWorkspaceRoot);
+    const modelSelection = claudeSessionToModelSelection(session.model);
+
+    if (!project) {
+      const projectId = ProjectId.makeUnsafe(crypto.randomUUID());
+      const createdAt = session.createdAt;
+      const title = nodePath.basename(session.cwd) || "Claude project";
+      yield* orchestrationEngine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        projectId,
+        title,
+        workspaceRoot: session.cwd,
+        defaultModelSelection: modelSelection,
+        createdAt,
+      });
+
+      project = {
+        id: projectId,
+        title,
+        workspaceRoot: session.cwd,
+        defaultModelSelection: modelSelection,
+        scripts: [],
+        createdAt,
+        updatedAt: createdAt,
+        deletedAt: null,
+      };
+      activeProjectsByWorkspaceRoot.set(normalizedWorkspaceRoot, project);
+      projectsCreated += 1;
+    }
+
+    const threadId = ThreadId.makeUnsafe(crypto.randomUUID());
+    const runtimeMode = claudePermissionModeToRuntimeMode(session.permissionMode);
+    const interactionMode = claudePermissionModeToInteractionMode(session.permissionMode);
+    const createdAt = session.createdAt;
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.create",
+      commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+      threadId,
+      projectId: project.id,
+      title: session.title,
+      modelSelection:
+        project.defaultModelSelection ??
+        modelSelection ??
+        ({
+          provider: "claudeAgent",
+          model: DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
+        } satisfies ModelSelection),
+      interactionMode:
+        interactionMode === "plan" ? "plan" : DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode,
+      branch: session.gitBranch ?? null,
+      worktreePath: null,
+      createdAt,
+    });
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+      threadId,
+      createdAt: session.updatedAt,
+      session: {
+        threadId,
+        status: "stopped",
+        providerName: "claudeAgent",
+        runtimeMode,
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: session.updatedAt,
+      },
+    });
+
+    yield* providerSessionRuntimeRepository.upsert({
+      threadId,
+      providerName: "claudeAgent",
+      adapterKey: "claudeAgent",
+      runtimeMode,
+      status: "stopped",
+      lastSeenAt: session.updatedAt,
+      resumeCursor: {
+        resume: session.sessionId,
+        turnCount: 0,
+      },
+      runtimePayload: {
+        cwd: session.cwd,
+        modelSelection,
+        nativeSessionId: session.sessionId,
+        nativeSessionPath: session.sourcePath,
+        nativeEntrypoint: session.entrypoint ?? null,
+        nativeSlug: session.slug ?? null,
+      },
+    });
+
+    existingClaudeSessionIds.add(session.sessionId);
+    imported += 1;
+  }
+
+  return {
+    discovered: discovered.length,
+    imported,
+    skipped,
+    projectsCreated,
+  } as const;
+});
+
 const maybeOpenBrowser = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   if (serverConfig.noBrowser) {
@@ -322,6 +521,28 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
         payload: welcome,
       }),
     );
+
+    yield* Effect.logDebug("startup phase: importing Claude native sessions");
+    const claudeImport = yield* runStartupPhase(
+      "claude.import",
+      importClaudeNativeSessions.pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to import Claude native sessions", {
+            detail: error.message,
+            cause: error.cause,
+          }).pipe(
+            Effect.as({
+              discovered: 0,
+              imported: 0,
+              skipped: 0,
+              projectsCreated: 0,
+              reason: "import-failed",
+            } as const),
+          ),
+        ),
+      ),
+    );
+    yield* Effect.logInfo("startup phase: Claude native session import complete", claudeImport);
   }).pipe(
     Effect.annotateSpans({
       "server.mode": serverConfig.mode,
