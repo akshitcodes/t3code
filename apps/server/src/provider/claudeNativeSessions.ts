@@ -159,8 +159,10 @@ function toClaudeModelSelection(model: string | undefined): ModelSelection {
 }
 
 export function normalizeWorkspaceRootForLookup(workspaceRoot: string): string {
-  const resolved = path.resolve(workspaceRoot);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  const trimmed = workspaceRoot.trim();
+  const isWindowsAbsolutePath = /^[a-z]:[\\/]/i.test(trimmed);
+  const resolved = isWindowsAbsolutePath ? path.win32.normalize(trimmed) : path.resolve(trimmed);
+  return isWindowsAbsolutePath || process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 export function claudePermissionModeToRuntimeMode(
