@@ -184,10 +184,7 @@ describe("claudeNativeSessions", () => {
         "55555555-5555-5555-5555-555555555555",
       );
       const normalized = normalizeWorkspaceRootForLookup("C:\\Users\\Akshit\\Project");
-      assert.equal(
-        normalized,
-        process.platform === "win32" ? "c:\\users\\akshit\\project" : "C:\\Users\\Akshit\\Project",
-      );
+      assert.equal(normalized, "c:\\users\\akshit\\project");
     }),
   );
 });
