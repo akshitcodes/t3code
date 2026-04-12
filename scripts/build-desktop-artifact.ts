@@ -179,6 +179,7 @@ interface StagePackageJson {
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
+  readonly overrides: Record<string, string>;
   readonly devDependencies: {
     readonly electron: string;
   };
@@ -438,6 +439,54 @@ function resolveDesktopRuntimeDependencies(
   return resolveCatalogDependencies(runtimeDependencies, catalog, "apps/desktop");
 }
 
+function resolvePinnedEffectOverrides(input: {
+  readonly catalog: Record<string, unknown>;
+  readonly runtimeDependencies: Record<string, unknown>;
+}): Record<string, string> {
+  const overrides = Object.fromEntries(
+    Object.keys(input.runtimeDependencies).flatMap((packageName) => {
+      const version = input.catalog[packageName];
+      if ((packageName === "effect" || packageName.startsWith("@effect/")) && version) {
+        return [[packageName, String(version)]];
+      }
+      return [];
+    }),
+  );
+
+  const platformNodeVersion = input.catalog["@effect/platform-node"];
+  if (platformNodeVersion) {
+    overrides["@effect/platform-node-shared"] = String(platformNodeVersion);
+  }
+
+  return overrides;
+}
+
+const assertPinnedRuntimeDependenciesInstalled = Effect.fn(
+  "assertPinnedRuntimeDependenciesInstalled",
+)(function* (stageAppDir: string, pinnedVersions: Record<string, string>) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  for (const [packageName, expectedVersion] of Object.entries(pinnedVersions)) {
+    const packageJsonPath = path.join(stageAppDir, "node_modules", packageName, "package.json");
+    if (!(yield* fs.exists(packageJsonPath))) {
+      return yield* new BuildScriptError({
+        message: `Pinned runtime dependency '${packageName}' was not installed at ${packageJsonPath}.`,
+      });
+    }
+
+    const rawPackageJson = yield* fs.readFileString(packageJsonPath);
+    const parsed = JSON.parse(rawPackageJson) as { version?: unknown };
+    const actualVersion = typeof parsed.version === "string" ? parsed.version : undefined;
+
+    if (actualVersion !== expectedVersion) {
+      return yield* new BuildScriptError({
+        message: `Pinned runtime dependency '${packageName}' resolved to '${actualVersion ?? "unknown"}' instead of '${expectedVersion}'.`,
+      });
+    }
+  }
+});
+
 function resolveGitHubPublishConfig():
   | {
       readonly provider: "github";
@@ -595,6 +644,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         cause,
       }),
   });
+  const pinnedEffectOverrides = resolvePinnedEffectOverrides({
+    catalog: rootPackageJson.workspaces.catalog,
+    runtimeDependencies: {
+      ...resolvedServerDependencies,
+      ...resolvedDesktopRuntimeDependencies,
+    },
+  });
 
   const appVersion = options.version ?? serverPackageJson.version;
   const commitHash = resolveGitCommitHash(repoRoot);
@@ -674,6 +730,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ...resolvedServerDependencies,
       ...resolvedDesktopRuntimeDependencies,
     },
+    // Keep prerelease Effect packages pinned during staged release installs.
+    // Without this, Bun can resolve newer transitive @effect/* betas than the
+    // ones in our workspace lockfile and produce runtime-incompatible desktop builds.
+    overrides: pinnedEffectOverrides,
     devDependencies: {
       electron: electronVersion,
     },
@@ -691,6 +751,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       shell: process.platform === "win32",
     })`bun install --production`,
   );
+  yield* assertPinnedRuntimeDependenciesInstalled(stageAppDir, pinnedEffectOverrides);
 
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
