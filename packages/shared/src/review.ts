@@ -42,6 +42,12 @@ export interface ParsedPlanReviewDecision {
   readonly body: string;
 }
 
+export interface StructuredPlanReviewPayload {
+  readonly goal: string;
+  readonly proposedPlan: string;
+  readonly extraContext?: string;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
@@ -98,6 +104,21 @@ export function buildPlanReviewThreadTitle(
   reviewerProvider: ProviderKind,
 ): string {
   return `Review: ${sourceTitle} (${providerLabel(reviewerProvider)})`;
+}
+
+export function buildStructuredPlanReviewPayload(input: StructuredPlanReviewPayload): string {
+  const goal = input.goal.trim();
+  const proposedPlan = input.proposedPlan.trim();
+  const extraContext = input.extraContext?.trim() ?? "";
+
+  return [
+    "Goal:",
+    goal,
+    "",
+    "Proposed plan:",
+    proposedPlan,
+    ...(extraContext.length > 0 ? ["", "Extra context:", extraContext] : []),
+  ].join("\n");
 }
 
 export function buildPlanReviewRequestPrompt(input: { readonly payload: string }): string {

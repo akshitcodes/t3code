@@ -8,7 +8,7 @@ export type ComposerSlashCommand = "model" | "plan" | "default" | "review";
 
 export interface ComposerReviewCommand {
   reviewerProvider: ProviderKind;
-  payload: string;
+  extraContext: string;
 }
 
 export interface ComposerTrigger {
@@ -257,24 +257,17 @@ export function parseStandaloneComposerSlashCommand(
 }
 
 export function parseStandaloneComposerReviewCommand(text: string): ComposerReviewCommand | null {
-  const match =
-    /^\/review\s+--(codex|claude|claudeagent|copilot)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  const match = /^\/review\s+--(codex|claude|claudeagent|copilot)(?:\s+([\s\S]*))?$/i.exec(
+    text.trim(),
+  );
   if (!match?.[1]) {
     return null;
   }
   const provider = match[1].toLowerCase();
-  const payload = (match[2] ?? "").trim();
-  if (payload.length === 0) {
-    return null;
-  }
   return {
     reviewerProvider:
-      provider === "codex"
-        ? "codex"
-        : provider === "copilot"
-          ? "copilot"
-          : "claudeAgent",
-    payload,
+      provider === "codex" ? "codex" : provider === "copilot" ? "copilot" : "claudeAgent",
+    extraContext: (match[2] ?? "").trim(),
   };
 }
 

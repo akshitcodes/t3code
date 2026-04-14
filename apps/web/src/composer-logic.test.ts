@@ -254,28 +254,32 @@ describe("parseStandaloneComposerReviewCommand", () => {
   it("parses a codex review command", () => {
     expect(parseStandaloneComposerReviewCommand(" /review --codex review this plan ")).toEqual({
       reviewerProvider: "codex",
-      payload: "review this plan",
+      extraContext: "review this plan",
     });
   });
 
   it("parses a claude review command alias", () => {
     expect(parseStandaloneComposerReviewCommand("/review --claude check sequencing")).toEqual({
       reviewerProvider: "claudeAgent",
-      payload: "check sequencing",
+      extraContext: "check sequencing",
     });
   });
 
   it("parses a copilot review command", () => {
-    expect(parseStandaloneComposerReviewCommand("/review --copilot validate assumptions")).toEqual(
-      {
-        reviewerProvider: "copilot",
-        payload: "validate assumptions",
-      },
-    );
+    expect(parseStandaloneComposerReviewCommand("/review --copilot validate assumptions")).toEqual({
+      reviewerProvider: "copilot",
+      extraContext: "validate assumptions",
+    });
+  });
+
+  it("allows review commands without extra context", () => {
+    expect(parseStandaloneComposerReviewCommand("/review --codex")).toEqual({
+      reviewerProvider: "codex",
+      extraContext: "",
+    });
   });
 
   it("rejects malformed review commands", () => {
     expect(parseStandaloneComposerReviewCommand("/review")).toBeNull();
-    expect(parseStandaloneComposerReviewCommand("/review --codex")).toBeNull();
   });
 });

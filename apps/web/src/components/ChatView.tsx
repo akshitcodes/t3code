@@ -206,6 +206,13 @@ import {
   findLinkedPlanReviewThread,
   providerLabel,
 } from "@t3tools/shared/review";
+import {
+  buildPlanReviewDraftPreview,
+  canSubmitPlanReviewDraft,
+  createPlanReviewDraft,
+  type PlanReviewDraftState,
+} from "../lib/planReviewDraft";
+import { PlanReviewDialog } from "./PlanReviewDialog";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -724,6 +731,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [planReviewDraft, setPlanReviewDraft] = useState<PlanReviewDraftState | null>(null);
   const [terminalLaunchContext, setTerminalLaunchContext] = useState<TerminalLaunchContext | null>(
     null,
   );
@@ -1202,7 +1210,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
     linkedReviewThread !== null &&
     activePlanReviewSession?.status === "completed" &&
     latestTurnSettled;
+  const planReviewPreviewText = useMemo(
+    () =>
+      planReviewDraft
+        ? buildPlanReviewDraftPreview({
+            goalText: planReviewDraft.goalText,
+            planText: planReviewDraft.planText,
+            extraContext: planReviewDraft.extraContext,
+          })
+        : "",
+    [planReviewDraft],
+  );
+  const canSubmitPlanReviewDialog = useMemo(
+    () =>
+      planReviewDraft
+        ? canSubmitPlanReviewDraft({
+            goalText: planReviewDraft.goalText,
+            planText: planReviewDraft.planText,
+          })
+        : false,
+    [planReviewDraft],
+  );
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
+  useEffect(() => {
+    setPlanReviewDraft(null);
+  }, [activeThread?.id]);
+
   const composerFooterActionLayoutKey = useMemo(() => {
     if (activePendingProgress) {
       return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;
@@ -1396,7 +1429,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return serverMessagesWithPreviewHandoff;
       }
       const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
-      const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
+      const pendingMessages = optimisticUserMessages.filter(
+        (message) => !serverIds.has(message.id),
+      );
       return pendingMessages.length === 0
         ? serverMessagesWithPreviewHandoff
         : [...serverMessagesWithPreviewHandoff, ...pendingMessages];
@@ -1493,16 +1528,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const gitStatusQuery = useQuery(gitStatusQueryOptions(gitCwd));
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
-  const modelOptionsByProvider = useMemo(
-    () => {
-      const result = {} as Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
-      for (const provider of ORDERED_PROVIDER_KINDS) {
-        result[provider] = getProviderModels(providerStatuses, provider);
-      }
-      return result;
-    },
-    [providerStatuses],
-  );
+  const modelOptionsByProvider = useMemo(() => {
+    const result = {} as Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
+    for (const provider of ORDERED_PROVIDER_KINDS) {
+      result[provider] = getProviderModels(providerStatuses, provider);
+    }
+    return result;
+  }, [providerStatuses]);
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
     const currentOptions = modelOptionsByProvider[selectedProvider];
     return currentOptions.some((option) => option.slug === selectedModelForPicker)
@@ -1576,7 +1608,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           type: "slash-command",
           command: "review",
           label: "/review",
-          description: "Send an explicit review payload to a linked reviewer thread",
+          description: "Draft a structured review request for a linked reviewer thread",
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const query = composerTrigger.query.trim().toLowerCase();
@@ -2975,7 +3007,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerHighlightedItemId(null);
       setComposerCursor(0);
       setComposerTrigger(null);
-      await onRequestPlanReview(standaloneReviewCommand);
+      openPlanReviewDialog(standaloneReviewCommand);
       return;
     }
     if (showPlanFollowUpPrompt && activeProposedPlan) {
@@ -3527,6 +3559,41 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ],
   );
 
+  const closePlanReviewDialog = useCallback(() => {
+    setPlanReviewDraft(null);
+  }, []);
+
+  const openPlanReviewDialog = useCallback(
+    (input: { reviewerProvider: ProviderKind; extraContext: string }) => {
+      if (
+        !activeThread ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+
+      setPlanReviewDraft(
+        createPlanReviewDraft({
+          reviewerProvider: input.reviewerProvider,
+          messages: activeThread.messages,
+          proposedPlan: activeProposedPlan,
+          initialExtraContext: input.extraContext,
+        }),
+      );
+    },
+    [activeProposedPlan, activeThread, isConnecting, isSendBusy, isServerThread],
+  );
+
+  const updatePlanReviewDraft = useCallback(
+    (updates: Partial<Pick<PlanReviewDraftState, "goalText" | "planText" | "extraContext">>) => {
+      setPlanReviewDraft((existing) => (existing ? { ...existing, ...updates } : existing));
+    },
+    [],
+  );
+
   const onRequestPlanReview = useCallback(
     async (input: { reviewerProvider: ProviderKind; payload: string }) => {
       const api = readNativeApi();
@@ -3538,7 +3605,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         isConnecting ||
         sendInFlightRef.current
       ) {
-        return;
+        return false;
       }
 
       sendInFlightRef.current = true;
@@ -3557,6 +3624,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           title: `${providerLabel(input.reviewerProvider)} review started`,
           description: review.reviewerThreadTitle,
         });
+        return true;
       } catch (err) {
         const message = extractErrorMessage(err, "Failed to start plan review.");
         setThreadError(activeThread.id, message);
@@ -3565,6 +3633,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           title: "Failed to start plan review",
           description: message,
         });
+        return false;
       } finally {
         sendInFlightRef.current = false;
         resetLocalDispatch();
@@ -3580,6 +3649,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setThreadError,
     ],
   );
+
+  const onSubmitPlanReviewDraft = useCallback(async () => {
+    if (
+      !planReviewDraft ||
+      !canSubmitPlanReviewDraft({
+        goalText: planReviewDraft.goalText,
+        planText: planReviewDraft.planText,
+      })
+    ) {
+      return;
+    }
+
+    const didStart = await onRequestPlanReview({
+      reviewerProvider: planReviewDraft.reviewerProvider,
+      payload: buildPlanReviewDraftPreview({
+        goalText: planReviewDraft.goalText,
+        planText: planReviewDraft.planText,
+        extraContext: planReviewDraft.extraContext,
+      }),
+    });
+
+    if (didStart) {
+      setPlanReviewDraft(null);
+    }
+  }, [onRequestPlanReview, planReviewDraft]);
 
   const onContinuePlanReview = useCallback(async () => {
     const api = readNativeApi();
@@ -4760,6 +4854,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 }
               }}
               onPrepared={handlePreparedPullRequestThread}
+            />
+          ) : null}
+          {planReviewDraft ? (
+            <PlanReviewDialog
+              open
+              draft={planReviewDraft}
+              previewText={planReviewPreviewText}
+              canSubmit={canSubmitPlanReviewDialog}
+              isSubmitting={isSendBusy}
+              onOpenChange={(open) => {
+                if (!open) {
+                  closePlanReviewDialog();
+                }
+              }}
+              onDraftChange={updatePlanReviewDraft}
+              onSubmit={() => void onSubmitPlanReviewDraft()}
             />
           ) : null}
         </div>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { EventId } from "@t3tools/contracts";
 
 import {
+  buildStructuredPlanReviewPayload,
   buildPlanReviewFeedbackMessage,
   buildPlanReviewIterationRequestPrompt,
   buildPlanReviewRequestPrompt,
@@ -31,6 +32,38 @@ describe("review helpers", () => {
     expect(prompt).toContain("User-provided review payload:");
     expect(prompt).toContain("DECISION: update-plan");
     expect(prompt).toContain("After that, write the rest of the review naturally");
+  });
+
+  it("builds a structured review payload for the reviewer", () => {
+    expect(
+      buildStructuredPlanReviewPayload({
+        goal: "Implement login flow",
+        proposedPlan: "1. Add routes\n2. Add tests",
+        extraContext: "We need to preserve the current API.",
+      }),
+    ).toBe(`Goal:
+Implement login flow
+
+Proposed plan:
+1. Add routes
+2. Add tests
+
+Extra context:
+We need to preserve the current API.`);
+  });
+
+  it("omits extra context when it is empty", () => {
+    expect(
+      buildStructuredPlanReviewPayload({
+        goal: "Implement login flow",
+        proposedPlan: "1. Add routes",
+        extraContext: "   ",
+      }),
+    ).toBe(`Goal:
+Implement login flow
+
+Proposed plan:
+1. Add routes`);
   });
 
   it("builds a follow-up review prompt for another iteration", () => {
