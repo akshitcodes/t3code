@@ -5,6 +5,8 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   type ModelSelection,
+  ProviderDriverKind,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 
 export interface ClaudeNativeSessionRecord {
@@ -148,12 +150,15 @@ function sessionTitleFromSummary(input: {
 
 function toClaudeModelSelection(model: string | undefined): ModelSelection {
   const trimmed = asTrimmedString(model)?.toLowerCase();
+  const claudeDriver = ProviderDriverKind.make("claudeAgent");
   const canonical =
     (trimmed
-      ? MODEL_SLUG_ALIASES_BY_PROVIDER.claudeAgent[trimmed] ?? trimmed
-      : undefined) ?? DEFAULT_MODEL_BY_PROVIDER.claudeAgent;
+      ? MODEL_SLUG_ALIASES_BY_PROVIDER[claudeDriver]?.[trimmed] ?? trimmed
+      : undefined) ??
+    DEFAULT_MODEL_BY_PROVIDER[claudeDriver] ??
+    "claude-sonnet-4-6";
   return {
-    provider: "claudeAgent",
+    instanceId: ProviderInstanceId.make("claudeAgent"),
     model: canonical,
   };
 }

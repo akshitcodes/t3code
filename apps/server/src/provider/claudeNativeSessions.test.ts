@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
+import { ProviderInstanceId } from "@t3tools/contracts";
 
 import {
   claudePermissionModeToInteractionMode,
@@ -174,7 +175,7 @@ describe("claudeNativeSessions", () => {
       assert.equal(claudePermissionModeToInteractionMode("plan"), "plan");
       assert.equal(claudePermissionModeToInteractionMode("default"), "default");
       assert.deepStrictEqual(claudeSessionToModelSelection("claude-opus-4-6-20251117"), {
-        provider: "claudeAgent",
+        instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-opus-4-6",
       });
       assert.equal(

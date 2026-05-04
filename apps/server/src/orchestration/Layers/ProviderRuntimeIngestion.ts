@@ -1113,12 +1113,12 @@ const make = Effect.gen(function* () {
   }) {
     yield* orchestrationEngine.dispatch({
       type: "thread.activity.append",
-      commandId: CommandId.makeUnsafe(
+      commandId: CommandId.make(
         `provider:plan-review-activity:${input.threadId}:${crypto.randomUUID()}`,
       ),
       threadId: input.threadId,
       activity: {
-        id: EventId.makeUnsafe(crypto.randomUUID()),
+        id: EventId.make(crypto.randomUUID()),
         tone: input.tone ?? "info",
         kind: input.kind,
         summary: input.summary,
@@ -1276,12 +1276,12 @@ const make = Effect.gen(function* () {
     });
     yield* orchestrationEngine.dispatch({
       type: "thread.turn.start",
-      commandId: CommandId.makeUnsafe(
+      commandId: CommandId.make(
         `provider:plan-review-feedback:${pendingReview.sourceThreadId}:${crypto.randomUUID()}`,
       ),
       threadId: pendingReview.sourceThreadId,
       message: {
-        messageId: MessageId.makeUnsafe(`review-feedback:${crypto.randomUUID()}`),
+        messageId: MessageId.make(`review-feedback:${crypto.randomUUID()}`),
         role: "user",
         text: feedbackMessage,
         attachments: [],
@@ -1603,24 +1603,26 @@ const make = Effect.gen(function* () {
           fallbackMarkdown: proposedPlanCompletion.planMarkdown,
           updatedAt: now,
         });
-        yield* bridgeCompletedPlanReview({
-          reviewerThreadId: thread.id,
-          turnId,
-          createdAt: now,
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("provider runtime ingestion failed to bridge completed plan review", {
-              eventId: event.eventId,
-              threadId: thread.id,
-              turnId,
-              cause: Cause.pretty(cause),
-            }),
-          ),
-        );
+        if (eventTurnId) {
+          yield* bridgeCompletedPlanReview({
+            reviewerThreadId: thread.id,
+            turnId: eventTurnId,
+            createdAt: now,
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider runtime ingestion failed to bridge completed plan review", {
+                eventId: event.eventId,
+                threadId: thread.id,
+                turnId: eventTurnId,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+        }
       }
 
       if (event.type === "turn.completed") {
-        const turnId = toTurnId(event.turnId);
+        const turnId = eventTurnId;
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
@@ -1651,6 +1653,21 @@ const make = Effect.gen(function* () {
             turnId,
             updatedAt: now,
           });
+
+          yield* bridgeCompletedPlanReview({
+            reviewerThreadId: thread.id,
+            turnId,
+            createdAt: now,
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider runtime ingestion failed to bridge completed plan review", {
+                eventId: event.eventId,
+                threadId: thread.id,
+                turnId,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
         }
       }
 

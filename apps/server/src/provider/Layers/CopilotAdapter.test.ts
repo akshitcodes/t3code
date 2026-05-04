@@ -9,8 +9,9 @@ import {
   type SessionEvent,
 } from "@github/copilot-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { createModelSelection } from "@t3tools/shared/model";
 import { Cause, Effect, Layer, ManagedRuntime, Schema } from "effect";
-import { ThreadId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, it, vi } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
@@ -19,7 +20,9 @@ import { ProviderAdapterRequestError } from "../Errors.ts";
 import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
 import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 
-const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+const COPILOT_DRIVER = ProviderDriverKind.make("copilot");
+const COPILOT_INSTANCE = ProviderInstanceId.make("copilot");
+const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 
 class FakeCopilotSession {
   public readonly sessionId = "copilot-session-1";
@@ -65,7 +68,11 @@ class FakeCopilotClient {
     | undefined;
   public readonly stop = vi.fn(async () => []);
 
-  constructor(readonly session: FakeCopilotSession) {}
+  public readonly session: FakeCopilotSession;
+
+  constructor(session: FakeCopilotSession) {
+    this.session = session;
+  }
 
   readonly createSession = vi.fn(async (config: SessionConfig) => {
     this.createSessionConfig = config;
@@ -117,13 +124,11 @@ describe("CopilotAdapter", () => {
 
       const session = await harness.runtime.runPromise(
         adapter.startSession({
-          provider: "copilot",
+          provider: COPILOT_DRIVER,
+          providerInstanceId: COPILOT_INSTANCE,
           threadId,
           runtimeMode: "full-access",
-          modelSelection: {
-            provider: "copilot",
-            model: "gpt-5.4-mini",
-          },
+          modelSelection: createModelSelection(COPILOT_INSTANCE, "gpt-5.4-mini"),
         }),
       );
 
@@ -135,10 +140,7 @@ describe("CopilotAdapter", () => {
         adapter.sendTurn({
           threadId,
           input: "hello",
-          modelSelection: {
-            provider: "copilot",
-            model: "gpt-5.4-mini",
-          },
+          modelSelection: createModelSelection(COPILOT_INSTANCE, "gpt-5.4-mini"),
         }),
       );
 
@@ -162,13 +164,11 @@ describe("CopilotAdapter", () => {
 
       await harness.runtime.runPromise(
         adapter.startSession({
-          provider: "copilot",
+          provider: COPILOT_DRIVER,
+          providerInstanceId: COPILOT_INSTANCE,
           threadId,
           runtimeMode: "full-access",
-          modelSelection: {
-            provider: "copilot",
-            model: "gpt-5.4-mini",
-          },
+          modelSelection: createModelSelection(COPILOT_INSTANCE, "gpt-5.4-mini"),
         }),
       );
 
@@ -178,10 +178,7 @@ describe("CopilotAdapter", () => {
         adapter.sendTurn({
           threadId,
           input: "hello",
-          modelSelection: {
-            provider: "copilot",
-            model: "gpt-5.4-mini",
-          },
+          modelSelection: createModelSelection(COPILOT_INSTANCE, "gpt-5.4-mini"),
         }),
       );
       assert.equal(exit._tag, "Failure");

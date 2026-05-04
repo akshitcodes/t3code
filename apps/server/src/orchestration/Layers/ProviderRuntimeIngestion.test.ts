@@ -2977,12 +2977,12 @@ describe("ProviderRuntimeIngestion", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.create",
-        commandId: CommandId.makeUnsafe("cmd-thread-create-source-review"),
+        commandId: CommandId.make("cmd-thread-create-source-review"),
         threadId: sourceThreadId,
         projectId: asProjectId("project-1"),
         title: "Source Thread",
         modelSelection: {
-          provider: "claudeAgent",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-sonnet-4-5",
         },
         interactionMode: "plan",
@@ -2995,12 +2995,12 @@ describe("ProviderRuntimeIngestion", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.create",
-        commandId: CommandId.makeUnsafe("cmd-thread-create-reviewer"),
+        commandId: CommandId.make("cmd-thread-create-reviewer"),
         threadId: reviewerThreadId,
         projectId: asProjectId("project-1"),
         title: "Review Thread",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: "plan",
@@ -3013,7 +3013,7 @@ describe("ProviderRuntimeIngestion", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.activity.append",
-        commandId: CommandId.makeUnsafe("cmd-source-review-link"),
+        commandId: CommandId.make("cmd-source-review-link"),
         threadId: sourceThreadId,
         activity: {
           id: asEventId("evt-source-review-link"),
@@ -3034,7 +3034,7 @@ describe("ProviderRuntimeIngestion", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.activity.append",
-        commandId: CommandId.makeUnsafe("cmd-review-request"),
+        commandId: CommandId.make("cmd-review-request"),
         threadId: reviewerThreadId,
         activity: {
           id: asEventId("evt-review-request"),
@@ -3058,7 +3058,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-review-delta"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt,
       threadId: reviewerThreadId,
       turnId: reviewerTurnId,
@@ -3076,7 +3076,7 @@ The plan is close, but it is missing a rollback step.
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-review-complete"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: reviewerThreadId,
       turnId: reviewerTurnId,

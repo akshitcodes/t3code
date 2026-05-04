@@ -7,7 +7,7 @@ import { describe, it, assert } from "@effect/vitest";
 import {
   remapVirtualAsarPathToUnpacked,
   resolveCopilotExecutablePathFromPackageDir,
-} from "./copilotCliPath";
+} from "./copilotCliPath.js";
 
 describe("copilotCliPath", () => {
   it("remaps virtual asar executable paths to the unpacked app bundle", () => {

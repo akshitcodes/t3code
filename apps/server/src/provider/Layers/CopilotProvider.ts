@@ -1,7 +1,10 @@
-import type {
+import {
   CopilotSettings,
-  ModelCapabilities,
-  ServerProviderModel,
+  type ModelCapabilities,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import { Effect, Equal, Layer, Option, Result, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -22,11 +25,12 @@ import {
 import { CopilotProvider } from "../Services/CopilotProvider.ts";
 import { ServerSettingsError } from "@t3tools/contracts";
 
-const PROVIDER = "copilot" as const;
+const PROVIDER = ProviderDriverKind.make("copilot");
 const COPILOT_VERSION_TIMEOUT_MS = 20_000;
 const COPILOT_PRESENTATION = {
   displayName: "GitHub Copilot",
 } as const satisfies ServerProviderPresentation;
+const DEFAULT_COPILOT_INSTANCE_ID = ProviderInstanceId.make("copilot");
 
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -109,6 +113,14 @@ export const makePendingCopilotProvider = (settings: CopilotSettings): ServerPro
     },
   });
 };
+
+function stampDefaultCopilotIdentity(snapshot: ServerProviderDraft): ServerProvider {
+  return {
+    ...snapshot,
+    instanceId: DEFAULT_COPILOT_INSTANCE_ID,
+    driver: PROVIDER,
+  };
+}
 
 const runCopilotCommand = Effect.fn("runCopilotCommand")(function* (
   binaryPath: string,
@@ -289,9 +301,12 @@ export const CopilotProviderLive = Layer.effect(
         Stream.map((settings) => settings.providers.copilot),
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
+      initialSnapshot: (settings) => stampDefaultCopilotIdentity(makePendingCopilotProvider(settings)),
       checkProvider: serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.providers.copilot),
-        Effect.flatMap((settings) => checkCopilotProviderStatus(settings)),
+        Effect.flatMap((settings) =>
+          checkCopilotProviderStatus(settings).pipe(Effect.map(stampDefaultCopilotIdentity)),
+        ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       ),
     });

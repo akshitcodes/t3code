@@ -86,7 +86,10 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
       const processEnv = mergeProviderInstanceEnvironment(environment);
       // Preserve pre-driver fork behavior: Copilot uses its own session runtime
       // but falls back to the Codex CLI text-generation pipeline for git/title work.
-      const textGeneration = yield* makeCodexTextGeneration(COPILOT_TEXTGEN_FALLBACK_CONFIG, processEnv);
+      const textGeneration = yield* makeCodexTextGeneration(
+        COPILOT_TEXTGEN_FALLBACK_CONFIG,
+        processEnv,
+      );
       const checkProvider = checkCopilotProviderStatus(effectiveConfig).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

@@ -61,7 +61,7 @@ const fakeClaudeAdapter: ClaudeAdapterShape = {
 
 const fakeCopilotAdapter: CopilotAdapterShape = {
   provider: COPILOT_DRIVER,
-  capabilities: { sessionModelSwitch: "restart-session" },
+  capabilities: { sessionModelSwitch: "in-session" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),

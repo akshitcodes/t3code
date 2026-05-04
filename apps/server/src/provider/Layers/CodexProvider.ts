@@ -1,4 +1,4 @@
-import { DateTime, Duration, Effect, Layer, Option, Result, Schema, Types } from "effect";
+import { DateTime, Duration, Effect, Layer, Option, Result, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
@@ -182,26 +182,15 @@ function parseCodexSkillsListResponse(
     const shortDescription =
       skill.shortDescription ?? skill.interface?.shortDescription ?? undefined;
 
-    const parsedSkill: Types.Mutable<ServerProviderSkill> = {
+    return {
       name: skill.name,
       path: skill.path,
       enabled: skill.enabled,
-    };
-
-    if (skill.description) {
-      parsedSkill.description = skill.description;
-    }
-    if (skill.scope) {
-      parsedSkill.scope = skill.scope;
-    }
-    if (skill.interface?.displayName) {
-      parsedSkill.displayName = skill.interface.displayName;
-    }
-    if (shortDescription) {
-      parsedSkill.shortDescription = shortDescription;
-    }
-
-    return parsedSkill;
+      ...(skill.description ? { description: skill.description } : {}),
+      ...(skill.scope ? { scope: skill.scope } : {}),
+      ...(skill.interface?.displayName ? { displayName: skill.interface.displayName } : {}),
+      ...(shortDescription ? { shortDescription } : {}),
+    } satisfies ServerProviderSkill;
   });
 }
 
@@ -324,6 +313,43 @@ const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvi
       capabilities: null,
     }));
 
+const WINDOWS_COMMAND_NOT_FOUND_PATTERNS = [
+  /is not recognized as an internal or external command/i,
+  /n.o . reconhecido como um comando interno/i,
+  /non . riconosciuto come comando interno o esterno/i,
+  /n.est pas reconnu en tant que commande interne/i,
+  /no se reconoce como un comando interno o externo/i,
+  /wird nicht als interner oder externer befehl/i,
+] as const;
+
+const flattenErrorText = (error: unknown): string => {
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error === null || typeof error !== "object") {
+    return "";
+  }
+
+  const values = Object.values(error as Record<string, unknown>);
+  return values
+    .map((value) => flattenErrorText(value))
+    .filter((value) => value.length > 0)
+    .join("\n");
+};
+
+const isCodexMissingBinaryError = (error: unknown): boolean => {
+  if (Schema.is(CodexErrors.CodexAppServerSpawnError)(error)) {
+    return true;
+  }
+
+  const detail = flattenErrorText(error);
+  if (detail.includes("ENOENT") || detail.includes("Command not found:")) {
+    return true;
+  }
+
+  return WINDOWS_COMMAND_NOT_FOUND_PATTERNS.some((pattern) => pattern.test(detail));
+};
+
 const makePendingCodexProvider = (codexSettings: CodexSettings): ServerProviderDraft => {
   const checkedAt = new Date().toISOString();
   const models = emptyCodexModelsFromSettings(codexSettings);
@@ -439,7 +465,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   if (Result.isFailure(probeResult)) {
     const error = probeResult.failure;
-    const installed = !Schema.is(CodexErrors.CodexAppServerSpawnError)(error);
+    const installed = !isCodexMissingBinaryError(error);
     return buildServerProvider({
       presentation: CODEX_PRESENTATION,
       enabled: codexSettings.enabled,

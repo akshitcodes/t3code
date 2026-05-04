@@ -3,6 +3,7 @@ import {
   type AuthAccessStreamEvent,
   AuthSessionId,
   CommandId,
+  DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   EventId,
   MessageId,
@@ -23,6 +24,8 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ThreadId,
   type TerminalEvent,
   WS_METHODS,
@@ -180,8 +183,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const serverAuth = yield* ServerAuth;
       const sourceControlDiscovery = yield* SourceControlDiscoveryLayer.SourceControlDiscovery;
       const sourceControlRepositories = yield* SourceControlRepositoryService;
-      const bootstrapCredentials = yield* BootstrapCredentialService;
-      const sessions = yield* SessionCredentialService;
       const serverCommandId = (tag: string) =>
         CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -245,15 +246,18 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             const providerSnapshot =
               providers.find(
                 (entry) =>
-                  entry.driver === reviewerProvider && entry.instanceId === reviewerProvider,
+                  entry.driver === reviewerProvider &&
+                  entry.instanceId === ProviderInstanceId.make(reviewerProvider),
               ) ?? providers.find((entry) => entry.driver === reviewerProvider);
             const model =
               providerSnapshot?.models.find((entry) => !entry.isCustom)?.slug ??
               providerSnapshot?.models[0]?.slug ??
-              DEFAULT_MODEL_BY_PROVIDER[reviewerProvider];
+              DEFAULT_MODEL_BY_PROVIDER[ProviderDriverKind.make(reviewerProvider)] ??
+              DEFAULT_MODEL;
 
             return {
-              instanceId: providerSnapshot?.instanceId ?? reviewerProvider,
+              instanceId:
+                providerSnapshot?.instanceId ?? ProviderInstanceId.make(reviewerProvider),
               model,
             };
           }),
@@ -280,7 +284,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           const reviewerThreadId =
             reviewerThread?.id ??
             input.reviewerThreadId ??
-            ThreadId.makeUnsafe(crypto.randomUUID());
+            ThreadId.make(crypto.randomUUID());
           const reviewerThreadTitle =
             reviewerThread?.title ??
             input.reviewerThreadTitle ??
@@ -352,13 +356,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
           const dispatchResult = yield* orchestrationEngine.dispatch({
             type: "thread.turn.start",
-            commandId: serverCommandId("plan-review-turn-start"),
-            threadId: reviewerThreadId,
-            message: {
-              messageId: MessageId.makeUnsafe(`plan-review:${crypto.randomUUID()}`),
-              role: "user",
-              text: input.reviewPrompt,
-              attachments: [],
+              commandId: serverCommandId("plan-review-turn-start"),
+              threadId: reviewerThreadId,
+              message: {
+                messageId: MessageId.make(`plan-review:${crypto.randomUUID()}`),
+                role: "user",
+                text: input.reviewPrompt,
+                attachments: [],
             },
             modelSelection: reviewerModelSelection,
             titleSeed: reviewerThreadTitle,
@@ -734,20 +738,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
-        [ORCHESTRATION_WS_METHODS.getSnapshot]: (_input) =>
-          observeRpcEffect(
-            ORCHESTRATION_WS_METHODS.getSnapshot,
-            projectionSnapshotQuery.getSnapshot().pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationGetSnapshotError({
-                    message: "Failed to load orchestration snapshot",
-                    cause,
-                  }),
-              ),
-            ),
-            { "rpc.aggregate": "orchestration" },
-          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -1036,7 +1026,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: (_input) =>
+        [ORCHESTRATION_WS_METHODS.subscribeShell]: (_input: {}) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
@@ -1122,7 +1112,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             }),
             { "rpc.aggregate": "orchestration" },
           ),
-        [WS_METHODS.serverGetConfig]: (_input) =>
+        [WS_METHODS.serverGetConfig]: (_input: {}) =>
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
             "rpc.aggregate": "server",
           }),
@@ -1144,7 +1134,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             }),
             { "rpc.aggregate": "server" },
           ),
-        [WS_METHODS.serverGetSettings]: (_input) =>
+        [WS_METHODS.serverGetSettings]: (_input: {}) =>
           observeRpcEffect(
             WS_METHODS.serverGetSettings,
             serverSettings.getSettings.pipe(Effect.map(redactServerSettingsForClient)),
@@ -1160,7 +1150,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
+        [WS_METHODS.serverDiscoverSourceControl]: (_input: {}) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,
             sourceControlDiscovery.discover,
@@ -1369,7 +1359,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
             "rpc.aggregate": "terminal",
           }),
-        [WS_METHODS.subscribeTerminalEvents]: (_input) =>
+        [WS_METHODS.subscribeTerminalEvents]: (_input: {}) =>
           observeRpcStream(
             WS_METHODS.subscribeTerminalEvents,
             Stream.callback<TerminalEvent>((queue) =>
@@ -1380,7 +1370,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "terminal" },
           ),
-        [WS_METHODS.subscribeServerConfig]: (_input) =>
+        [WS_METHODS.subscribeServerConfig]: (_input: {}) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeServerConfig,
             Effect.gen(function* () {
@@ -1431,7 +1421,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             }),
             { "rpc.aggregate": "server" },
           ),
-        [WS_METHODS.subscribeServerLifecycle]: (_input) =>
+        [WS_METHODS.subscribeServerLifecycle]: (_input: {}) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeServerLifecycle,
             Effect.gen(function* () {
@@ -1446,10 +1436,12 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             }),
             { "rpc.aggregate": "server" },
           ),
-        [WS_METHODS.subscribeAuthAccess]: (_input) =>
+        [WS_METHODS.subscribeAuthAccess]: (_input: {}) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeAuthAccess,
             Effect.gen(function* () {
+              const bootstrapCredentials = yield* BootstrapCredentialService;
+              const sessions = yield* SessionCredentialService;
               const initialSnapshot = yield* loadAuthAccessSnapshot();
               const revisionRef = yield* Ref.make(1);
               const accessChanges: Stream.Stream<

@@ -8,6 +8,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   type ModelSelection,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -337,12 +338,12 @@ const importClaudeNativeSessions = Effect.gen(function* () {
     const modelSelection = claudeSessionToModelSelection(session.model);
 
     if (!project) {
-      const projectId = ProjectId.makeUnsafe(crypto.randomUUID());
+      const projectId = ProjectId.make(crypto.randomUUID());
       const createdAt = session.createdAt;
       const title = nodePath.basename(session.cwd) || "Claude project";
       yield* orchestrationEngine.dispatch({
         type: "project.create",
-        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        commandId: CommandId.make(crypto.randomUUID()),
         projectId,
         title,
         workspaceRoot: session.cwd,
@@ -364,14 +365,14 @@ const importClaudeNativeSessions = Effect.gen(function* () {
       projectsCreated += 1;
     }
 
-    const threadId = ThreadId.makeUnsafe(crypto.randomUUID());
+    const threadId = ThreadId.make(crypto.randomUUID());
     const runtimeMode = claudePermissionModeToRuntimeMode(session.permissionMode);
     const interactionMode = claudePermissionModeToInteractionMode(session.permissionMode);
     const createdAt = session.createdAt;
 
     yield* orchestrationEngine.dispatch({
       type: "thread.create",
-      commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+      commandId: CommandId.make(crypto.randomUUID()),
       threadId,
       projectId: project.id,
       title: session.title,
@@ -380,7 +381,9 @@ const importClaudeNativeSessions = Effect.gen(function* () {
         modelSelection ??
         ({
           instanceId: ProviderInstanceId.make("claudeAgent"),
-          model: DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
+          model:
+            DEFAULT_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")] ??
+            DEFAULT_MODEL,
         } satisfies ModelSelection),
       interactionMode:
         interactionMode === "plan" ? "plan" : DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -392,7 +395,7 @@ const importClaudeNativeSessions = Effect.gen(function* () {
 
     yield* orchestrationEngine.dispatch({
       type: "thread.session.set",
-      commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+      commandId: CommandId.make(crypto.randomUUID()),
       threadId,
       createdAt: session.updatedAt,
       session: {

@@ -16,6 +16,8 @@ import {
   type ChatAttachment,
   EventId,
   type ModelSelection,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ProviderItemId,
   type ProviderRuntimeEvent,
   type ProviderSession,
@@ -26,6 +28,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import { Effect, FileSystem, Layer, Queue, Random, Stream } from "effect";
+import { createModelSelection, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -35,16 +38,35 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { resolveCopilotCliPath } from "../copilotCliPath";
+import { resolveCopilotCliPath } from "../copilotCliPath.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { CopilotAdapter, type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
 
-const PROVIDER = "copilot" as const;
+const PROVIDER = ProviderDriverKind.make("copilot");
 interface CopilotReplayTurn {
   readonly input?: string;
   readonly attachments?: Array<ChatAttachment>;
   readonly interactionMode?: "default" | "plan";
   readonly modelSelection?: ModelSelection;
+}
+
+function toCopilotReasoningOptions(
+  reasoningEffort: string | undefined,
+): {
+  reasoningEffort: Exclude<
+    NonNullable<Parameters<CopilotSession["setModel"]>[1]>["reasoningEffort"],
+    undefined
+  >;
+} | undefined {
+  return reasoningEffort
+    ? {
+        reasoningEffort:
+          reasoningEffort as Exclude<
+            NonNullable<Parameters<CopilotSession["setModel"]>[1]>["reasoningEffort"],
+            undefined
+          >,
+      }
+    : undefined;
 }
 
 interface CopilotResumeCursor {
@@ -99,6 +121,7 @@ export interface CopilotAdapterLiveOptions {
   readonly createClient?: (options?: CopilotClientOptions) => CopilotClient;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly instanceId?: typeof ProviderInstanceId.Type;
 }
 
 function nowIso(): string {
@@ -106,7 +129,7 @@ function nowIso(): string {
 }
 
 function makeEventId(value?: string): EventId {
-  return EventId.makeUnsafe(value ?? crypto.randomUUID());
+  return EventId.make(value ?? crypto.randomUUID());
 }
 
 function toMessage(cause: unknown, fallback: string): string {
@@ -154,19 +177,19 @@ function readResumeCursor(value: unknown): CopilotResumeCursor | undefined {
 }
 
 function toProviderItemId(value: string): ProviderItemId {
-  return ProviderItemId.makeUnsafe(value);
+  return ProviderItemId.make(value);
 }
 
 function toRuntimeItemId(value: string): RuntimeItemId {
-  return RuntimeItemId.makeUnsafe(value);
+  return RuntimeItemId.make(value);
 }
 
 function toRuntimeRequestId(value: string): RuntimeRequestId {
-  return RuntimeRequestId.makeUnsafe(value);
+  return RuntimeRequestId.make(value);
 }
 
 function toRuntimeTaskId(value: string): RuntimeTaskId {
-  return RuntimeTaskId.makeUnsafe(value);
+  return RuntimeTaskId.make(value);
 }
 
 function classifyToolItemType(toolName: string): CanonicalItemType {
@@ -275,8 +298,9 @@ function permissionDecisionToResult(
 
 function isCopilotModelSelection(
   modelSelection: ModelSelection | undefined,
-): modelSelection is Extract<ModelSelection, { provider: "copilot" }> {
-  return modelSelection?.provider === "copilot";
+  instanceId: typeof ProviderInstanceId.Type,
+): modelSelection is ModelSelection {
+  return modelSelection?.instanceId === instanceId;
 }
 
 function buildClientOptions(cwd?: string): CopilotClientOptions {
@@ -308,9 +332,10 @@ function toPendingApproval(request: PermissionRequest, approval: ApprovalPromise
   };
 }
 
-const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
+export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   options?: CopilotAdapterLiveOptions,
 ) {
+  const adapterInstanceId = options?.instanceId ?? ProviderInstanceId.make("copilot");
   const fileSystem = yield* FileSystem.FileSystem;
   const serverConfig = yield* Effect.service(ServerConfig);
   const nativeEventLogger =
@@ -322,11 +347,13 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       : undefined);
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CopilotSessionContext>();
-  const services = yield* Effect.services();
-  const runPromise = Effect.runPromiseWith(services);
+  const runPromise = Effect.runPromise;
 
   const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
-    Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
+    Queue.offer(runtimeEventQueue, {
+      ...event,
+      providerInstanceId: event.providerInstanceId ?? adapterInstanceId,
+    }).pipe(Effect.asVoid);
 
   const writeNativeEvent = (event: unknown, threadId: ThreadId) =>
     nativeEventLogger ? nativeEventLogger.write(event, threadId) : Effect.void;
@@ -887,7 +914,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     readonly threadId: ThreadId;
     readonly cwd?: string;
     readonly runtimeMode: ProviderSession["runtimeMode"];
-    readonly modelSelection?: Extract<ModelSelection, { provider: "copilot" }>;
+    readonly modelSelection?: ModelSelection;
     readonly resumeCursor?: CopilotResumeCursor;
     readonly attachListener?: boolean;
   }) {
@@ -906,7 +933,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
               if (!context) {
                 return { kind: "denied-interactively-by-user" };
               }
-              const requestId = ApprovalRequestId.makeUnsafe(crypto.randomUUID());
+              const requestId = ApprovalRequestId.make(crypto.randomUUID());
               const approval = createApprovalPromise();
               const pending = toPendingApproval(request, approval);
               context.pendingApprovals.set(requestId, pending);
@@ -1005,6 +1032,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     const context: CopilotSessionContext = {
       session: {
         provider: PROVIDER,
+        providerInstanceId: adapterInstanceId,
         status: "connecting",
         runtimeMode: input.runtimeMode,
         threadId: input.threadId,
@@ -1020,7 +1048,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       copilotSession,
       pendingApprovals: new Map(),
       turns: (input.resumeCursor?.turns ?? []).map((turn) => ({
-        id: TurnId.makeUnsafe(crypto.randomUUID()),
+        id: TurnId.make(crypto.randomUUID()),
         items: [],
         replay: turn,
       })),
@@ -1103,17 +1131,23 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         context.currentMode = "interactive";
       }
 
-      const replayModelSelection = isCopilotModelSelection(replayTurn.modelSelection)
+      const replayModelSelection = isCopilotModelSelection(
+        replayTurn.modelSelection,
+        adapterInstanceId,
+      )
         ? replayTurn.modelSelection
         : undefined;
       if (replayModelSelection) {
+        const reasoningEffort = getModelSelectionStringOptionValue(
+          replayModelSelection,
+          "reasoningEffort",
+        );
+        const modelOptions = toCopilotReasoningOptions(reasoningEffort);
         yield* Effect.tryPromise({
           try: () =>
             context.copilotSession.setModel(
               replayModelSelection.model,
-              replayModelSelection.options?.reasoningEffort
-                ? { reasoningEffort: replayModelSelection.options.reasoningEffort }
-                : undefined,
+              modelOptions,
             ),
           catch: (cause) =>
             new ProviderAdapterRequestError({
@@ -1138,7 +1172,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           }),
       });
       context.turns.push({
-        id: TurnId.makeUnsafe(crypto.randomUUID()),
+        id: TurnId.make(crypto.randomUUID()),
         items: [],
         replay: replayTurn,
       });
@@ -1185,7 +1219,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }
 
       const resumeCursor = readResumeCursor(input.resumeCursor);
-      const modelSelection = isCopilotModelSelection(input.modelSelection)
+      const modelSelection = isCopilotModelSelection(input.modelSelection, adapterInstanceId)
         ? input.modelSelection
         : undefined;
 
@@ -1207,17 +1241,17 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       yield* completeTurn(context, "completed");
     }
 
-    const modelSelection = isCopilotModelSelection(input.modelSelection)
+    const modelSelection = isCopilotModelSelection(input.modelSelection, adapterInstanceId)
       ? input.modelSelection
       : undefined;
     if (modelSelection?.model && modelSelection.model !== context.currentModel) {
+      const reasoningEffort = getModelSelectionStringOptionValue(modelSelection, "reasoningEffort");
+      const modelOptions = toCopilotReasoningOptions(reasoningEffort);
       yield* Effect.tryPromise({
         try: () =>
           context.copilotSession.setModel(
             modelSelection.model,
-            modelSelection.options?.reasoningEffort
-              ? { reasoningEffort: modelSelection.options.reasoningEffort }
-              : undefined,
+            modelOptions,
           ),
         catch: (cause) =>
           new ProviderAdapterRequestError({
@@ -1245,7 +1279,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       context.currentMode = nextMode;
     }
 
-    const turnId = TurnId.makeUnsafe(yield* Random.nextUUIDv4);
+    const turnId = TurnId.make(yield* Random.nextUUIDv4);
     const replay: CopilotReplayTurn = {
       ...(input.input !== undefined ? { input: input.input } : {}),
       ...(input.attachments?.length ? { attachments: [...input.attachments] } : {}),
@@ -1356,10 +1390,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         .slice(0, Math.max(0, existing.turns.length - numTurns))
         .map((turn) => turn.replay);
       const modelSelection = existing.currentModel
-        ? ({
-            provider: PROVIDER,
-            model: existing.currentModel,
-          } as const)
+        ? createModelSelection(adapterInstanceId, existing.currentModel)
         : undefined;
 
       yield* stopContext(existing, false);
@@ -1442,7 +1473,7 @@ const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
   return {
     provider: PROVIDER,
-    capabilities: { sessionModelSwitch: "restart-session" },
+    capabilities: { sessionModelSwitch: "in-session" },
     startSession,
     sendTurn,
     interruptTurn,
