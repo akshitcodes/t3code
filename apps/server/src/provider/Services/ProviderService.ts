@@ -6,14 +6,14 @@
  * session-scoped calls via `ProviderSessionDirectory`, and exposes one unified
  * provider event stream to callers.
  *
- * Uses Effect `ServiceMap.Service` for dependency injection and returns typed
+ * Uses Effect `Context.Service` for dependency injection and returns typed
  * domain errors for validation, session, codex, and checkpoint workflows.
  *
  * @module ProviderService
  */
 import type {
   ProviderInterruptTurnInput,
-  ProviderKind,
+  ProviderInstanceId,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderRuntimeEvent,
@@ -24,11 +24,12 @@ import type {
   ThreadId,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 import type { Effect, Stream } from "effect";
 
 import type { ProviderServiceError } from "../Errors.ts";
 import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
+import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 /**
  * ProviderServiceShape - Service API for provider session and turn orchestration.
@@ -85,11 +86,15 @@ export interface ProviderServiceShape {
   readonly listSessions: () => Effect.Effect<ReadonlyArray<ProviderSession>>;
 
   /**
-   * Read static capabilities for a provider adapter.
+   * Read capabilities for the adapter bound to a configured provider instance.
    */
   readonly getCapabilities: (
-    provider: ProviderKind,
+    instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderAdapterCapabilities, ProviderServiceError>;
+
+  readonly getInstanceInfo: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ProviderInstanceRoutingInfo, ProviderServiceError>;
 
   /**
    * Roll back provider conversation state by a number of turns.
@@ -110,6 +115,6 @@ export interface ProviderServiceShape {
 /**
  * ProviderService - Service tag for provider orchestration.
  */
-export class ProviderService extends ServiceMap.Service<ProviderService, ProviderServiceShape>()(
+export class ProviderService extends Context.Service<ProviderService, ProviderServiceShape>()(
   "t3/provider/Services/ProviderService",
 ) {}

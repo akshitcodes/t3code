@@ -1,10 +1,11 @@
 import type {
-  ProviderKind,
+  ProviderInstanceId,
+  ProviderDriverKind,
   ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
-import { Option, ServiceMap } from "effect";
+import { Option, Context } from "effect";
 import type { Effect } from "effect";
 
 import type {
@@ -14,12 +15,22 @@ import type {
 
 export interface ProviderRuntimeBinding {
   readonly threadId: ThreadId;
-  readonly provider: ProviderKind;
+  readonly provider: ProviderDriverKind;
+  /**
+   * Routing key for the configured provider instance that owns this
+   * session. The persistence layer promotes legacy null rows before
+   * exposing bindings; runtime callers must not infer this from `provider`.
+   */
+  readonly providerInstanceId?: ProviderInstanceId;
   readonly adapterKey?: string;
   readonly status?: ProviderSessionRuntimeStatus;
   readonly resumeCursor?: unknown | null;
   readonly runtimePayload?: unknown | null;
   readonly runtimeMode?: RuntimeMode;
+}
+
+export interface ProviderRuntimeBindingWithMetadata extends ProviderRuntimeBinding {
+  readonly lastSeenAt: string;
 }
 
 export type ProviderSessionDirectoryReadError = ProviderSessionDirectoryPersistenceError;
@@ -35,23 +46,24 @@ export interface ProviderSessionDirectoryShape {
 
   readonly getProvider: (
     threadId: ThreadId,
-  ) => Effect.Effect<ProviderKind, ProviderSessionDirectoryReadError>;
+  ) => Effect.Effect<ProviderDriverKind, ProviderSessionDirectoryReadError>;
 
   readonly getBinding: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<ProviderRuntimeBinding>, ProviderSessionDirectoryReadError>;
 
-  readonly remove: (
-    threadId: ThreadId,
-  ) => Effect.Effect<void, ProviderSessionDirectoryPersistenceError>;
-
   readonly listThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
     ProviderSessionDirectoryPersistenceError
   >;
+
+  readonly listBindings: () => Effect.Effect<
+    ReadonlyArray<ProviderRuntimeBindingWithMetadata>,
+    ProviderSessionDirectoryPersistenceError
+  >;
 }
 
-export class ProviderSessionDirectory extends ServiceMap.Service<
+export class ProviderSessionDirectory extends Context.Service<
   ProviderSessionDirectory,
   ProviderSessionDirectoryShape
 >()("t3/provider/Services/ProviderSessionDirectory") {}

@@ -15,7 +15,7 @@ import {
   PLAN_REVIEW_FINISHED_ACTIVITY_KIND,
   PLAN_REVIEW_LINK_ACTIVITY_KIND,
   PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
-} from "./review";
+} from "./review.js";
 
 describe("review helpers", () => {
   it("builds a reviewer thread title", () => {
@@ -119,7 +119,7 @@ Missing rollback plan.`,
       findLinkedPlanReviewThread(
         [
           {
-            id: EventId.makeUnsafe("evt-link"),
+            id: EventId.make("evt-link"),
             tone: "info",
             kind: PLAN_REVIEW_LINK_ACTIVITY_KIND,
             summary: "Linked review thread",
@@ -146,7 +146,7 @@ Missing rollback plan.`,
     expect(
       findPendingPlanReviewRequest([
         {
-          id: EventId.makeUnsafe("evt-request"),
+          id: EventId.make("evt-request"),
           tone: "info",
           kind: PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
           summary: "Review requested",
@@ -163,7 +163,7 @@ Missing rollback plan.`,
           createdAt: "2026-04-06T10:00:00.000Z",
         },
         {
-          id: EventId.makeUnsafe("evt-complete"),
+          id: EventId.make("evt-complete"),
           tone: "info",
           kind: PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
           summary: "Review completed",
@@ -181,7 +181,7 @@ Missing rollback plan.`,
     expect(
       findLatestActivePlanReview([
         {
-          id: EventId.makeUnsafe("evt-request"),
+          id: EventId.make("evt-request"),
           tone: "info",
           kind: PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
           summary: "Review requested",
@@ -198,7 +198,7 @@ Missing rollback plan.`,
           createdAt: "2026-04-06T10:00:00.000Z",
         },
         {
-          id: EventId.makeUnsafe("evt-complete"),
+          id: EventId.make("evt-complete"),
           tone: "info",
           kind: PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
           summary: "Review completed",
@@ -234,7 +234,7 @@ Missing rollback plan.`,
     expect(
       findLatestActivePlanReview([
         {
-          id: EventId.makeUnsafe("evt-complete"),
+          id: EventId.make("evt-complete"),
           tone: "info",
           kind: PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
           summary: "Review completed",
@@ -252,7 +252,7 @@ Missing rollback plan.`,
           createdAt: "2026-04-06T10:01:00.000Z",
         },
         {
-          id: EventId.makeUnsafe("evt-finished"),
+          id: EventId.make("evt-finished"),
           tone: "info",
           kind: PLAN_REVIEW_FINISHED_ACTIVITY_KIND,
           summary: "Review finished",

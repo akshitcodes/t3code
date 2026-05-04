@@ -1,11 +1,11 @@
 import type {
-  ClaudeModelOptions,
-  CodexModelOptions,
-  CopilotModelOptions,
   ModelSelection,
+  ProviderOptionSelection,
   ProviderKind,
   ProviderModelOptions,
 } from "@t3tools/contracts";
+import { ProviderDriverKind, defaultInstanceIdForDriver } from "@t3tools/contracts";
+import { createModelSelection, trimOrNull } from "@t3tools/shared/model";
 
 export const ORDERED_PROVIDER_KINDS = ["codex", "claudeAgent", "copilot"] as const satisfies
   ReadonlyArray<ProviderKind>;
@@ -15,26 +15,11 @@ export function buildModelSelection(
   model: string,
   options?: ProviderModelOptions[ProviderKind],
 ): ModelSelection {
-  switch (provider) {
-    case "codex":
-      return {
-        provider,
-        model,
-        ...(options ? { options: options as CodexModelOptions } : {}),
-      };
-    case "claudeAgent":
-      return {
-        provider,
-        model,
-        ...(options ? { options: options as ClaudeModelOptions } : {}),
-      };
-    case "copilot":
-      return {
-        provider,
-        model,
-        ...(options ? { options: options as CopilotModelOptions } : {}),
-      };
-  }
+  return createModelSelection(
+    defaultInstanceIdForDriver(ProviderDriverKind.make(provider)),
+    model,
+    toProviderOptionSelections(options),
+  );
 }
 
 export function getProviderSelectionOptions(
@@ -49,4 +34,27 @@ export function getProviderSelectionOptions(
     case "copilot":
       return modelOptions?.copilot;
   }
+}
+
+function toProviderOptionSelections(
+  options: ProviderModelOptions[ProviderKind] | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  if (!options) {
+    return undefined;
+  }
+
+  const selections: ProviderOptionSelection[] = [];
+  for (const [id, value] of Object.entries(options)) {
+    if (typeof value === "boolean") {
+      selections.push({ id, value });
+      continue;
+    }
+
+    const trimmed = trimOrNull(value);
+    if (trimmed) {
+      selections.push({ id, value: trimmed });
+    }
+  }
+
+  return selections.length > 0 ? selections : undefined;
 }

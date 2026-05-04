@@ -1,28 +1,32 @@
 import type {
   CopilotSettings,
   ModelCapabilities,
-  ServerProvider,
   ServerProviderModel,
 } from "@t3tools/contracts";
-import { Effect, Equal, Layer, Option, Result, Stream } from "effect";
+import { Effect, Equal, Layer, Option, Result, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { ServerSettingsService } from "../../serverSettings";
-import { resolveCopilotCliPath } from "../copilotCliPath";
-import { makeManagedServerProvider } from "../makeManagedServerProvider";
+import { ServerSettingsService } from "../../serverSettings.ts";
+import { resolveCopilotCliPath } from "../copilotCliPath.ts";
+import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   buildServerProvider,
   detailFromResult,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
+  type ServerProviderDraft,
+  type ServerProviderPresentation,
   spawnAndCollect,
-} from "../providerSnapshot";
-import { CopilotProvider } from "../Services/CopilotProvider";
+} from "../providerSnapshot.ts";
+import { CopilotProvider } from "../Services/CopilotProvider.ts";
 import { ServerSettingsError } from "@t3tools/contracts";
 
 const PROVIDER = "copilot" as const;
 const COPILOT_VERSION_TIMEOUT_MS = 20_000;
+const COPILOT_PRESENTATION = {
+  displayName: "GitHub Copilot",
+} as const satisfies ServerProviderPresentation;
 
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -78,6 +82,34 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
+export const makePendingCopilotProvider = (settings: CopilotSettings): ServerProviderDraft => {
+  const customModelCapabilities = BUILT_IN_MODELS[0]?.capabilities ?? {
+    reasoningEffortLevels: [],
+    supportsFastMode: false,
+    supportsThinkingToggle: false,
+    contextWindowOptions: [],
+    promptInjectedEffortLevels: [],
+  };
+  return buildServerProvider({
+    presentation: COPILOT_PRESENTATION,
+    enabled: settings.enabled,
+    checkedAt: new Date().toISOString(),
+    models: providerModelsFromSettings(
+      BUILT_IN_MODELS,
+      PROVIDER,
+      settings.customModels,
+      customModelCapabilities,
+    ),
+    probe: {
+      installed: false,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "Checking GitHub Copilot CLI availability...",
+    },
+  });
+};
+
 const runCopilotCommand = Effect.fn("runCopilotCommand")(function* (
   binaryPath: string,
   args: ReadonlyArray<string>,
@@ -128,22 +160,31 @@ const probeCopilotVersion = Effect.fn("probeCopilotVersion")(function* (binaryPa
 });
 
 export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus")(function* (
+  settings: CopilotSettings = Schema.decodeSync(CopilotSettings)({}),
   resolveBinaryPath: () => string | undefined = resolveCopilotCliPath,
 ): Effect.fn.Return<
-  ServerProvider,
+  ServerProviderDraft,
   ServerSettingsError,
-  ChildProcessSpawner.ChildProcessSpawner | ServerSettingsService
+  ChildProcessSpawner.ChildProcessSpawner
 > {
-  const serverSettings = yield* ServerSettingsService;
-  const settings = yield* serverSettings.getSettings.pipe(
-    Effect.map((allSettings) => allSettings.providers.copilot),
-  );
   const checkedAt = new Date().toISOString();
-  const fallbackModels = providerModelsFromSettings(BUILT_IN_MODELS, PROVIDER, settings.customModels);
+  const customModelCapabilities = BUILT_IN_MODELS[0]?.capabilities ?? {
+    reasoningEffortLevels: [],
+    supportsFastMode: false,
+    supportsThinkingToggle: false,
+    contextWindowOptions: [],
+    promptInjectedEffortLevels: [],
+  };
+  const fallbackModels = providerModelsFromSettings(
+    BUILT_IN_MODELS,
+    PROVIDER,
+    settings.customModels,
+    customModelCapabilities,
+  );
 
   if (!settings.enabled) {
     return buildServerProvider({
-      provider: PROVIDER,
+      presentation: COPILOT_PRESENTATION,
       enabled: false,
       checkedAt,
       models: fallbackModels,
@@ -163,7 +204,7 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
     return buildServerProvider({
-      provider: PROVIDER,
+      presentation: COPILOT_PRESENTATION,
       enabled: true,
       checkedAt,
       models: fallbackModels,
@@ -181,7 +222,7 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
 
   if (Option.isNone(versionProbe.success)) {
     return buildServerProvider({
-      provider: PROVIDER,
+      presentation: COPILOT_PRESENTATION,
       enabled: true,
       checkedAt,
       models: fallbackModels,
@@ -201,7 +242,7 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
   if (versionResult.code !== 0) {
     const detail = detailFromResult(versionResult);
     return buildServerProvider({
-      provider: PROVIDER,
+      presentation: COPILOT_PRESENTATION,
       enabled: true,
       checkedAt,
       models: fallbackModels,
@@ -218,7 +259,7 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
   }
 
   return buildServerProvider({
-    provider: PROVIDER,
+    presentation: COPILOT_PRESENTATION,
     enabled: true,
     checkedAt,
     models: fallbackModels,
@@ -238,10 +279,6 @@ export const CopilotProviderLive = Layer.effect(
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const checkProvider = checkCopilotProviderStatus().pipe(
-      Effect.provideService(ServerSettingsService, serverSettings),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
 
     return yield* makeManagedServerProvider<CopilotSettings>({
       getSettings: serverSettings.getSettings.pipe(
@@ -252,7 +289,11 @@ export const CopilotProviderLive = Layer.effect(
         Stream.map((settings) => settings.providers.copilot),
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
-      checkProvider,
+      checkProvider: serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.providers.copilot),
+        Effect.flatMap((settings) => checkCopilotProviderStatus(settings)),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
     });
   }),
 );

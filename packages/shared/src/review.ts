@@ -214,7 +214,7 @@ export function findLinkedPlanReviewThread(
     }
     return {
       role,
-      linkedThreadId: ThreadId.makeUnsafe(linkedThreadId),
+      linkedThreadId: ThreadId.make(linkedThreadId),
       reviewerProvider: parsedReviewerProvider,
     };
   }
@@ -257,8 +257,8 @@ export function findPendingPlanReviewRequest(
 
     return {
       reviewId,
-      sourceThreadId: ThreadId.makeUnsafe(sourceThreadId),
-      reviewerThreadId: ThreadId.makeUnsafe(reviewerThreadId),
+      sourceThreadId: ThreadId.make(sourceThreadId),
+      reviewerThreadId: ThreadId.make(reviewerThreadId),
       reviewerProvider,
       requestPrompt,
       rootRequestPrompt,
@@ -316,8 +316,8 @@ export function findLatestActivePlanReview(
 
     return {
       reviewId,
-      sourceThreadId: ThreadId.makeUnsafe(sourceThreadId),
-      reviewerThreadId: ThreadId.makeUnsafe(reviewerThreadId),
+      sourceThreadId: ThreadId.make(sourceThreadId),
+      reviewerThreadId: ThreadId.make(reviewerThreadId),
       reviewerProvider,
       requestPrompt,
       rootRequestPrompt,

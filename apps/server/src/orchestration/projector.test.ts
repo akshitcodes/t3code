@@ -2,6 +2,7 @@ import {
   CommandId,
   EventId,
   ProjectId,
+  ProviderDriverKind,
   ThreadId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
@@ -21,15 +22,15 @@ function makeEvent(input: {
 }): OrchestrationEvent {
   return {
     sequence: input.sequence,
-    eventId: EventId.makeUnsafe(`event-${input.sequence}`),
+    eventId: EventId.make(`event-${input.sequence}`),
     type: input.type,
     aggregateKind: input.aggregateKind,
     aggregateId:
       input.aggregateKind === "project"
-        ? ProjectId.makeUnsafe(input.aggregateId)
-        : ThreadId.makeUnsafe(input.aggregateId),
+        ? ProjectId.make(input.aggregateId)
+        : ThreadId.make(input.aggregateId),
     occurredAt: input.occurredAt,
-    commandId: input.commandId === null ? null : CommandId.makeUnsafe(input.commandId),
+    commandId: input.commandId === null ? null : CommandId.make(input.commandId),
     causationEventId: null,
     correlationId: null,
     metadata: {},
@@ -57,7 +58,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5-codex",
             },
             runtimeMode: "full-access",
@@ -77,7 +78,7 @@ describe("orchestration projector", () => {
         projectId: "project-1",
         title: "demo",
         modelSelection: {
-          provider: "codex",
+          instanceId: "codex",
           model: "gpt-5-codex",
         },
         runtimeMode: "full-access",
@@ -118,7 +119,7 @@ describe("orchestration projector", () => {
               projectId: "project-1",
               title: "demo",
               modelSelection: {
-                provider: "codex",
+                provider: ProviderDriverKind.make("codex"),
                 model: "gpt-5-codex",
               },
               branch: null,
@@ -150,7 +151,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5-codex",
             },
             runtimeMode: "full-access",
@@ -253,7 +254,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5.3-codex",
             },
             runtimeMode: "full-access",
@@ -319,7 +320,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5.3-codex",
             },
             runtimeMode: "full-access",
@@ -376,7 +377,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5.3-codex",
             },
             runtimeMode: "full-access",
@@ -463,7 +464,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5.3-codex",
             },
             runtimeMode: "full-access",
@@ -678,7 +679,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5.3-codex",
             },
             runtimeMode: "full-access",
@@ -831,7 +832,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "capped",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5-codex",
             },
             runtimeMode: "full-access",

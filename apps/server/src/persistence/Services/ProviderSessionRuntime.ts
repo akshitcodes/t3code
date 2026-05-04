@@ -7,11 +7,12 @@
  */
 import {
   IsoDateTime,
+  ProviderInstanceId,
   ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
-import { Option, Schema, ServiceMap } from "effect";
+import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
 import type { ProviderSessionRuntimeRepositoryError } from "../Errors.ts";
@@ -19,6 +20,14 @@ import type { ProviderSessionRuntimeRepositoryError } from "../Errors.ts";
 export const ProviderSessionRuntime = Schema.Struct({
   threadId: ThreadId,
   providerName: Schema.String,
+  /**
+   * User-defined routing key for the configured provider instance that
+   * owns this session. Nullable only at the storage/migration boundary:
+   * rows persisted before the driver/instance split carry only
+   * `providerName`. Repository consumers must materialize a concrete
+   * instance id before routing.
+   */
+  providerInstanceId: Schema.NullOr(ProviderInstanceId),
   adapterKey: Schema.String,
   runtimeMode: RuntimeMode,
   status: ProviderSessionRuntimeStatus,
@@ -75,7 +84,7 @@ export interface ProviderSessionRuntimeRepositoryShape {
 /**
  * ProviderSessionRuntimeRepository - Service tag for provider runtime persistence.
  */
-export class ProviderSessionRuntimeRepository extends ServiceMap.Service<
+export class ProviderSessionRuntimeRepository extends Context.Service<
   ProviderSessionRuntimeRepository,
   ProviderSessionRuntimeRepositoryShape
 >()("t3/persistence/Services/ProviderSessionRuntime/ProviderSessionRuntimeRepository") {}

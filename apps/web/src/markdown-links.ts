@@ -1,4 +1,5 @@
-import { resolvePathLinkTarget } from "./terminal-links";
+import { formatWorkspaceRelativePath } from "./filePathDisplay";
+import { resolvePathLinkTarget, splitPathAndPosition } from "./terminal-links";
 
 const WINDOWS_DRIVE_PATH_PATTERN = /^[A-Za-z]:[\\/]/;
 const WINDOWS_UNC_PATH_PATTERN = /^\\\\/;
@@ -21,6 +22,15 @@ const POSIX_FILE_ROOT_PREFIXES = [
   "/root/",
 ] as const;
 
+export interface MarkdownFileLinkMeta {
+  filePath: string;
+  targetPath: string;
+  displayPath: string;
+  basename: string;
+  line?: number;
+  column?: number;
+}
+
 function safeDecode(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -38,23 +48,34 @@ function stripSearchAndHash(value: string): { path: string; hash: string } {
   return { path, hash: rawHash };
 }
 
-function parseFileUrlHref(href: string): { path: string; hash: string } | null {
+function parseFileUrlHref(
+  href: string,
+  options?: { readonly decodePath?: boolean },
+): { path: string; hash: string } | null {
   try {
     const parsed = new URL(href);
     if (parsed.protocol.toLowerCase() !== "file:") return null;
 
-    const decodedPath = safeDecode(parsed.pathname);
-    if (decodedPath.length === 0) return null;
+    const rawPath = parsed.pathname;
+    if (rawPath.length === 0) return null;
 
     // Browser URL parser encodes "C:/foo" as "/C:/foo" for file URLs.
-    const normalizedPath = /^\/[A-Za-z]:[\\/]/.test(decodedPath)
-      ? decodedPath.slice(1)
-      : decodedPath;
+    const normalizedPath = /^\/[A-Za-z]:[\\/]/.test(rawPath) ? rawPath.slice(1) : rawPath;
 
-    return { path: normalizedPath, hash: parsed.hash };
+    return {
+      path: options?.decodePath === false ? normalizedPath : safeDecode(normalizedPath),
+      hash: parsed.hash,
+    };
   } catch {
     return null;
   }
+}
+
+export function rewriteMarkdownFileUriHref(href: string | undefined): string | null {
+  if (!href) return null;
+  const target = parseFileUrlHref(href.trim(), { decodePath: false });
+  if (!target) return null;
+  return `${target.path}${target.hash}`;
 }
 
 function looksLikePosixFilesystemPath(path: string): boolean {
@@ -131,4 +152,32 @@ export function resolveMarkdownFileLinkTarget(
 
   if (!cwd) return null;
   return resolvePathLinkTarget(pathWithPosition, cwd);
+}
+
+function basenameOfPath(path: string): string {
+  const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
+}
+
+export function resolveMarkdownFileLinkMeta(
+  href: string | undefined,
+  cwd?: string,
+): MarkdownFileLinkMeta | null {
+  const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
+  if (!targetPath) return null;
+
+  const { path, line, column } = splitPathAndPosition(targetPath);
+  const parsedLine = line ? Number.parseInt(line, 10) : Number.NaN;
+  const parsedColumn = column ? Number.parseInt(column, 10) : Number.NaN;
+  const lineNumber = Number.isFinite(parsedLine) ? parsedLine : undefined;
+  const columnNumber = Number.isFinite(parsedColumn) ? parsedColumn : undefined;
+
+  return {
+    filePath: path,
+    targetPath,
+    displayPath: formatWorkspaceRelativePath(targetPath, cwd),
+    basename: basenameOfPath(path),
+    ...(lineNumber !== undefined ? { line: lineNumber } : {}),
+    ...(columnNumber !== undefined ? { column: columnNumber } : {}),
+  };
 }

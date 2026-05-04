@@ -10,7 +10,7 @@
 import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
-  ProviderKind,
+  ProviderDriverKind,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
@@ -23,7 +23,7 @@ import type {
 import type { Effect } from "effect";
 import type { Stream } from "effect";
 
-export type ProviderSessionModelSwitchMode = "in-session" | "restart-session" | "unsupported";
+export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 
 export interface ProviderAdapterCapabilities {
   /**
@@ -46,7 +46,7 @@ export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
    */
-  readonly provider: ProviderKind;
+  readonly provider: ProviderDriverKind;
   readonly capabilities: ProviderAdapterCapabilities;
 
   /**

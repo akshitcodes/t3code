@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildMacManualUpdateScript, resolveMacAppBundlePath } from "./macManualUpdate";
+import { buildMacManualUpdateScript, resolveMacAppBundlePath } from "./macManualUpdate.js";
 
 describe("resolveMacAppBundlePath", () => {
   it("resolves the enclosing .app bundle from the executable path", () => {

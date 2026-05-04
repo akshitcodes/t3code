@@ -2,8 +2,8 @@ import { KeybindingCommand, KeybindingRule, KeybindingsConfig } from "@t3tools/c
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
-import { Effect, FileSystem, Layer, Logger, Path, Schema } from "effect";
-import { ServerConfig } from "./config";
+import { Cause, Effect, FileSystem, Layer, Logger, Path, Schema } from "effect";
+import { ServerConfig } from "./config.ts";
 
 import {
   DEFAULT_KEYBINDINGS,
@@ -13,7 +13,7 @@ import {
   compileResolvedKeybindingRule,
   compileResolvedKeybindingsConfig,
   parseKeybindingShortcut,
-} from "./keybindings";
+} from "./keybindings.ts";
 import { KeybindingsConfigError } from "@t3tools/contracts";
 
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
@@ -149,6 +149,23 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }),
   );
 
+  it.effect("formats invalid resolved keybinding rules with the custom message", () =>
+    Effect.sync(() => {
+      const result = Schema.decodeUnknownExit(ResolvedKeybindingFromConfig)({
+        key: "mod+shift+d+o",
+        command: "terminal.new",
+      });
+
+      if (result._tag !== "Failure") {
+        assert.fail("Expected invalid keybinding decode to fail");
+      }
+
+      const detail = Cause.pretty(result.cause);
+      assert.isTrue(detail.includes("Invalid keybinding rule"));
+      assert.isFalse(detail.includes("Invalid data"));
+    }),
+  );
+
   it.effect("bootstraps default keybindings when config file is missing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -175,6 +192,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("thread.jump.9"), "mod+9");
+      assert.equal(defaultsByCommand.get("modelPicker.toggle"), "mod+shift+m");
+      assert.equal(defaultsByCommand.get("modelPicker.jump.1"), "mod+1");
+      assert.equal(defaultsByCommand.get("modelPicker.jump.9"), "mod+9");
     }),
   );
 

@@ -1,7 +1,20 @@
-import type { GitBranch } from "@t3tools/contracts";
+import type {
+  VcsRef,
+  SourceControlProviderInfo,
+  VcsStatusLocalResult,
+  VcsStatusRemoteResult,
+  VcsStatusResult,
+  VcsStatusStreamEvent,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Random from "effect/Random";
+import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
+
+export const WORKTREE_BRANCH_PREFIX = "t3code";
+const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
 
 /**
- * Sanitize an arbitrary string into a valid, lowercase git branch fragment.
+ * Sanitize an arbitrary string into a valid, lowercase git refName fragment.
  * Strips quotes, collapses separators, limits to 64 chars.
  */
 export function sanitizeBranchFragment(raw: string): string {
@@ -23,7 +36,7 @@ export function sanitizeBranchFragment(raw: string): string {
 }
 
 /**
- * Sanitize a string into a `feature/…` branch name.
+ * Sanitize a string into a `feature/…` refName name.
  * Preserves an existing `feature/` prefix or slash-separated namespace.
  */
 export function sanitizeFeatureBranchName(raw: string): string {
@@ -37,8 +50,8 @@ export function sanitizeFeatureBranchName(raw: string): string {
 const AUTO_FEATURE_BRANCH_FALLBACK = "feature/update";
 
 /**
- * Resolve a unique `feature/…` branch name that doesn't collide with
- * any existing branch. Appends a numeric suffix when needed.
+ * Resolve a unique `feature/…` refName name that doesn't collide with
+ * any existing refName. Appends a numeric suffix when needed.
  */
 export function resolveAutoFeatureBranchName(
   existingBranchNames: readonly string[],
@@ -48,7 +61,7 @@ export function resolveAutoFeatureBranchName(
   const resolvedBase = sanitizeFeatureBranchName(
     preferred && preferred.length > 0 ? preferred : AUTO_FEATURE_BRANCH_FALLBACK,
   );
-  const existingNames = new Set(existingBranchNames.map((branch) => branch.toLowerCase()));
+  const existingNames = new Set(existingBranchNames.map((refName) => refName.toLowerCase()));
 
   if (!existingNames.has(resolvedBase)) {
     return resolvedBase;
@@ -73,6 +86,65 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   return branchName.slice(firstSeparatorIndex + 1);
 }
 
+export function buildTemporaryWorktreeBranchName(): string {
+  const token = Effect.runSync(Random.nextUUIDv4).replace(/-/g, "").slice(0, 8).toLowerCase();
+  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+}
+
+export function isTemporaryWorktreeBranch(refName: string): boolean {
+  return TEMP_WORKTREE_BRANCH_PATTERN.test(refName.trim().toLowerCase());
+}
+
+/**
+ * Normalize a git remote URL into a stable comparison key.
+ */
+export function normalizeGitRemoteUrl(value: string): string {
+  const normalized = value
+    .trim()
+    .replace(/\/+$/g, "")
+    .replace(/\.git$/i, "")
+    .toLowerCase();
+
+  if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
+    try {
+      const url = new URL(normalized);
+      const repositoryPath = url.pathname
+        .split("/")
+        .filter((segment) => segment.length > 0)
+        .join("/");
+      if (url.hostname && repositoryPath.includes("/")) {
+        return `${url.hostname}/${repositoryPath}`;
+      }
+    } catch {
+      return normalized;
+    }
+  }
+
+  const scpStyleHostAndPath = /^git@([^:/\s]+)[:/]([^/\s]+(?:\/[^/\s]+)+)$/i.exec(normalized);
+  if (scpStyleHostAndPath?.[1] && scpStyleHostAndPath[2]) {
+    return `${scpStyleHostAndPath[1]}/${scpStyleHostAndPath[2]}`;
+  }
+
+  return normalized;
+}
+
+/**
+ * Best-effort parse of a GitHub `owner/repo` identifier from common remote URL shapes.
+ */
+export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
+  const trimmed = url?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const match =
+    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
+      trimmed,
+    );
+  const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
+  return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
+}
+
 function deriveLocalBranchNameCandidatesFromRemoteRef(
   branchName: string,
   remoteName?: string,
@@ -94,28 +166,105 @@ function deriveLocalBranchNameCandidatesFromRemoteRef(
 }
 
 /**
- * Hide `origin/*` remote refs when a matching local branch already exists.
+ * Hide `origin/*` remote refs when a matching local refName already exists.
  */
 export function dedupeRemoteBranchesWithLocalMatches(
-  branches: ReadonlyArray<GitBranch>,
-): ReadonlyArray<GitBranch> {
+  refs: ReadonlyArray<VcsRef>,
+): ReadonlyArray<VcsRef> {
   const localBranchNames = new Set(
-    branches.filter((branch) => !branch.isRemote).map((branch) => branch.name),
+    refs.filter((refName) => !refName.isRemote).map((refName) => refName.name),
   );
 
-  return branches.filter((branch) => {
-    if (!branch.isRemote) {
+  return refs.filter((refName) => {
+    if (!refName.isRemote) {
       return true;
     }
 
-    if (branch.remoteName !== "origin") {
+    if (refName.remoteName !== "origin") {
       return true;
     }
 
     const localBranchCandidates = deriveLocalBranchNameCandidatesFromRemoteRef(
-      branch.name,
-      branch.remoteName,
+      refName.name,
+      refName.remoteName,
     );
     return !localBranchCandidates.some((candidate) => localBranchNames.has(candidate));
   });
+}
+
+export function detectSourceControlProviderFromGitRemoteUrl(
+  remoteUrl: string,
+): SourceControlProviderInfo | null {
+  return detectSourceControlProviderFromRemoteUrl(remoteUrl);
+}
+
+const EMPTY_GIT_STATUS_REMOTE: VcsStatusRemoteResult = {
+  hasUpstream: false,
+  aheadCount: 0,
+  behindCount: 0,
+  aheadOfDefaultCount: 0,
+  pr: null,
+};
+
+export function mergeGitStatusParts(
+  local: VcsStatusLocalResult,
+  remote: VcsStatusRemoteResult | null,
+): VcsStatusResult {
+  return {
+    ...local,
+    ...(remote ?? EMPTY_GIT_STATUS_REMOTE),
+  };
+}
+
+function toRemoteStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
+  return {
+    hasUpstream: status.hasUpstream,
+    aheadCount: status.aheadCount,
+    behindCount: status.behindCount,
+    ...(status.aheadOfDefaultCount === undefined
+      ? {}
+      : { aheadOfDefaultCount: status.aheadOfDefaultCount }),
+    pr: status.pr,
+  };
+}
+
+function toLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
+  return {
+    isRepo: status.isRepo,
+    ...(status.sourceControlProvider
+      ? { sourceControlProvider: status.sourceControlProvider }
+      : {}),
+    hasPrimaryRemote: status.hasPrimaryRemote,
+    isDefaultRef: status.isDefaultRef,
+    refName: status.refName,
+    hasWorkingTreeChanges: status.hasWorkingTreeChanges,
+    workingTree: status.workingTree,
+  };
+}
+
+export function applyGitStatusStreamEvent(
+  current: VcsStatusResult | null,
+  event: VcsStatusStreamEvent,
+): VcsStatusResult {
+  switch (event._tag) {
+    case "snapshot":
+      return mergeGitStatusParts(event.local, event.remote);
+    case "localUpdated":
+      return mergeGitStatusParts(event.local, current ? toRemoteStatusPart(current) : null);
+    case "remoteUpdated":
+      if (current === null) {
+        return mergeGitStatusParts(
+          {
+            isRepo: true,
+            hasPrimaryRemote: false,
+            isDefaultRef: false,
+            refName: null,
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+          },
+          event.remote,
+        );
+      }
+      return mergeGitStatusParts(toLocalStatusPart(current), event.remote);
+  }
 }
