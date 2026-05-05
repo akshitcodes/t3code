@@ -3,8 +3,9 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
 type PackageJsonLike = {
+  readonly name?: string;
   readonly optionalDependencies?: Readonly<Record<string, string>>;
-  readonly exports?: string;
+  readonly exports?: unknown;
   readonly bin?: Readonly<Record<string, string>>;
 };
 
@@ -59,6 +60,14 @@ function preferExistingExecutablePath(candidatePath: string): string | undefined
 
 export function resolveCopilotExecutablePathFromPackageDir(packageDir: string): string | undefined {
   const packageJson = readJson(join(packageDir, "package.json"));
+
+  if (packageJson?.name === "@github/copilot") {
+    const appCliPath = preferExistingExecutablePath(join(packageDir, "app.js"));
+    if (appCliPath) {
+      return appCliPath;
+    }
+  }
+
   const executableRelativePath = packageJson
     ? resolveExecutableRelativePath(packageJson)
     : undefined;

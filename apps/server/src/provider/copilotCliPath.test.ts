@@ -42,4 +42,30 @@ describe("copilotCliPath", () => {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it("prefers the app CLI entry for the packaged @github/copilot package", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "t3-copilot-cli-"));
+    try {
+      const packageDir = join(tempRoot, "node_modules", "@github", "copilot");
+      mkdirSync(packageDir, { recursive: true });
+      writeFileSync(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "@github/copilot",
+          bin: {
+            copilot: "npm-loader.js",
+          },
+        }),
+      );
+      writeFileSync(join(packageDir, "app.js"), "stub");
+      writeFileSync(join(packageDir, "npm-loader.js"), "stub");
+
+      assert.strictEqual(
+        resolveCopilotExecutablePathFromPackageDir(packageDir),
+        join(packageDir, "app.js"),
+      );
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });
