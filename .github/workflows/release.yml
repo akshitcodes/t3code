@@ -399,6 +399,7 @@ jobs:
     steps:
       - id: app_token
         name: Mint release app token
+        if: github.repository == 'pingdotgg/t3code'
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
@@ -421,7 +422,7 @@ jobs:
           node-version-file: package.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts
+        run: bun install --frozen-lockfile --ignore-scripts --filter=@t3tools/scripts
 
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v8
@@ -489,7 +490,7 @@ jobs:
             release-assets/*.blockmap
             release-assets/*.yml
           fail_on_unmatched_files: true
-          token: ${{ steps.app_token.outputs.token }}
+          token: ${{ steps.app_token.outputs.token || github.token }}
 
       - name: Publish first release
         if: needs.preflight.outputs.previous_tag == ''
@@ -509,7 +510,7 @@ jobs:
             release-assets/*.blockmap
             release-assets/*.yml
           fail_on_unmatched_files: true
-          token: ${{ steps.app_token.outputs.token }}
+          token: ${{ steps.app_token.outputs.token || github.token }}
 
   finalize:
     name: Finalize release
