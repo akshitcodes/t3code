@@ -76,7 +76,10 @@ function getProviderStateFromCapabilities(
   const normalizedOptions = (() => {
     switch (provider) {
       case "codex":
-        return normalizeCodexModelOptionsWithCapabilities(caps, providerOptions as CodexModelOptions);
+        return normalizeCodexModelOptionsWithCapabilities(
+          caps,
+          providerOptions as CodexModelOptions,
+        );
       case "copilot":
         return normalizeCopilotModelOptionsWithCapabilities(
           caps,

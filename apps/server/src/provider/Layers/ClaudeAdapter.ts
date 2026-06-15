@@ -253,15 +253,51 @@ function resultErrorsText(result: SDKResultMessage): string {
     : "";
 }
 
+function isClaudeDiagnosticError(message: string): boolean {
+  return message.trim().toLowerCase().startsWith("[ede_diagnostic]");
+}
+
+function resultTerminalReason(result: SDKResultMessage): string | undefined {
+  const terminalReason = (result as { terminal_reason?: unknown }).terminal_reason;
+  return typeof terminalReason === "string" && terminalReason.trim().length > 0
+    ? terminalReason.trim().toLowerCase()
+    : undefined;
+}
+
+function resultErrorMessage(result: SDKResultMessage): string | undefined {
+  if (!("errors" in result) || !Array.isArray(result.errors)) {
+    return undefined;
+  }
+
+  const normalizedErrors = result.errors
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  const preferred = normalizedErrors.find((entry) => !isClaudeDiagnosticError(entry));
+  if (!preferred) {
+    return normalizedErrors[0];
+  }
+
+  if (preferred.startsWith("Error:")) {
+    return preferred.split("\n", 1)[0]?.trim() ?? preferred;
+  }
+  return preferred;
+}
+
 function isInterruptedResult(result: SDKResultMessage): boolean {
   const errors = resultErrorsText(result);
+  const terminalReason = resultTerminalReason(result);
   if (errors.includes("interrupt")) {
+    return true;
+  }
+
+  if (terminalReason === "aborted_streaming") {
     return true;
   }
 
   return (
     result.subtype === "error_during_execution" &&
-    result.is_error === false &&
     (errors.includes("request was aborted") ||
       errors.includes("interrupted by user") ||
       errors.includes("aborted"))
@@ -1907,7 +1943,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const status = turnStatusFromResult(message);
-    const errorMessage = message.subtype === "success" ? undefined : message.errors[0];
+    const errorMessage = message.subtype === "success" ? undefined : resultErrorMessage(message);
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");

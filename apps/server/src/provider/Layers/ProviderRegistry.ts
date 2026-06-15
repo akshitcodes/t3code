@@ -81,9 +81,12 @@ export const ProviderRegistryLive = Layer.effect(
           yield* copilotProvider.refresh;
           break;
         default:
-          yield* Effect.all([codexProvider.refresh, claudeProvider.refresh, copilotProvider.refresh], {
-            concurrency: "unbounded",
-          });
+          yield* Effect.all(
+            [codexProvider.refresh, claudeProvider.refresh, copilotProvider.refresh],
+            {
+              concurrency: "unbounded",
+            },
+          );
           break;
       }
       return yield* syncProviders();

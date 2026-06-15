@@ -255,7 +255,7 @@ function makeProviderServiceLayer() {
           ? Effect.succeed(claude.adapter)
           : provider === "copilot"
             ? Effect.succeed(copilot.adapter)
-          : Effect.fail(new ProviderUnsupportedError({ provider })),
+            : Effect.fail(new ProviderUnsupportedError({ provider })),
     listProviders: () => Effect.succeed(["codex", "claudeAgent", "copilot"]),
   };
 
@@ -301,7 +301,7 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
             ? Effect.succeed(claude.adapter)
             : provider === "copilot"
               ? Effect.succeed(copilot.adapter)
-            : Effect.fail(new ProviderUnsupportedError({ provider })),
+              : Effect.fail(new ProviderUnsupportedError({ provider })),
       listProviders: () => Effect.succeed(["codex", "claudeAgent", "copilot"]),
     };
     const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);

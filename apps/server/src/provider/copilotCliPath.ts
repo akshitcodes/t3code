@@ -97,7 +97,12 @@ function resolvePackagedPlatformCliPath(platformPackageName: string): string | u
     return undefined;
   }
 
-  const packageDir = join(resourcesPath, "app.asar.unpacked", "node_modules", ...platformPackageName.split("/"));
+  const packageDir = join(
+    resourcesPath,
+    "app.asar.unpacked",
+    "node_modules",
+    ...platformPackageName.split("/"),
+  );
   return resolveCopilotExecutablePathFromPackageDir(packageDir);
 }
 

@@ -510,9 +510,7 @@ function normalizeProviderModelOptions(
       ? copilotCandidate.reasoningEffort
       : undefined;
   const copilot: CopilotModelOptions | undefined =
-    copilotReasoningEffort !== undefined
-      ? { reasoningEffort: copilotReasoningEffort }
-      : undefined;
+    copilotReasoningEffort !== undefined ? { reasoningEffort: copilotReasoningEffort } : undefined;
 
   if (!codex && !claude && !copilot) {
     return null;

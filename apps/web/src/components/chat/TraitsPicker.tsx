@@ -213,8 +213,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
         const stripped = prompt.replace(/^Ultrathink:\s*/i, "");
         onPromptChange(stripped);
       }
-      const effortKey =
-        provider === "claudeAgent" ? "effort" : ("reasoningEffort" as const);
+      const effortKey = provider === "claudeAgent" ? "effort" : ("reasoningEffort" as const);
       updateModelOptions(
         buildNextOptions(provider, modelOptions, { [effortKey]: nextOption.value }),
       );

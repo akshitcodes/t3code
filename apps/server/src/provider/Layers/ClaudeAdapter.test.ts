@@ -1100,6 +1100,72 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "treats aborted streaming diagnostics as interrupted without surfacing the diagnostic",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        });
+
+        const turn = yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "hello",
+          attachments: [],
+        });
+
+        harness.query.emit({
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          stop_reason: null,
+          terminal_reason: "aborted_streaming",
+          errors: [
+            "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null",
+            "Error: Request was aborted.\n    at yy_ (/tmp/cli.js:1:1)",
+          ],
+          session_id: "sdk-session-abort-diagnostic",
+          uuid: "result-abort-diagnostic",
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        assert.deepEqual(
+          runtimeEvents.map((event) => event.type),
+          [
+            "session.started",
+            "session.configured",
+            "session.state.changed",
+            "turn.started",
+            "thread.started",
+            "turn.completed",
+          ],
+        );
+
+        const turnCompleted = runtimeEvents[runtimeEvents.length - 1];
+        assert.equal(turnCompleted?.type, "turn.completed");
+        if (turnCompleted?.type === "turn.completed") {
+          assert.equal(String(turnCompleted.turnId), String(turn.turnId));
+          assert.equal(turnCompleted.payload.state, "interrupted");
+          assert.equal(turnCompleted.payload.errorMessage, "Error: Request was aborted.");
+          assert.equal(turnCompleted.payload.stopReason, null);
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("closes the session when the Claude stream aborts after a turn starts", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

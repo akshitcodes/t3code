@@ -863,7 +863,9 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
       if (!downloadedUpdateFilePath) {
         throw new Error("Downloaded Mac update archive was not found.");
       }
-      console.info(`[desktop-updater] Scheduling manual Mac install from ${downloadedUpdateFilePath}.`);
+      console.info(
+        `[desktop-updater] Scheduling manual Mac install from ${downloadedUpdateFilePath}.`,
+      );
       await scheduleMacManualUpdateInstall({
         appPid: process.pid,
         executablePath: app.getPath("exe"),

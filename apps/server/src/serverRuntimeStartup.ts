@@ -279,11 +279,12 @@ const importClaudeNativeSessions = Effect.gen(function* () {
   }
 
   const existingRuntimeBindings = yield* providerSessionRuntimeRepository.list().pipe(
-    Effect.mapError((cause) =>
-      new ServerRuntimeStartupError({
-        message: "Failed to read persisted provider runtime bindings.",
-        cause,
-      }),
+    Effect.mapError(
+      (cause) =>
+        new ServerRuntimeStartupError({
+          message: "Failed to read persisted provider runtime bindings.",
+          cause,
+        }),
     ),
   );
   const existingClaudeSessionIds = new Set(
@@ -296,11 +297,12 @@ const importClaudeNativeSessions = Effect.gen(function* () {
   );
 
   const snapshot = yield* projectionSnapshotQuery.getSnapshot().pipe(
-    Effect.mapError((cause) =>
-      new ServerRuntimeStartupError({
-        message: "Failed to read orchestration snapshot before Claude session import.",
-        cause,
-      }),
+    Effect.mapError(
+      (cause) =>
+        new ServerRuntimeStartupError({
+          message: "Failed to read orchestration snapshot before Claude session import.",
+          cause,
+        }),
     ),
   );
 
@@ -370,8 +372,7 @@ const importClaudeNativeSessions = Effect.gen(function* () {
           provider: "claudeAgent",
           model: DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
         } satisfies ModelSelection),
-      interactionMode:
-        interactionMode === "plan" ? "plan" : DEFAULT_PROVIDER_INTERACTION_MODE,
+      interactionMode: interactionMode === "plan" ? "plan" : DEFAULT_PROVIDER_INTERACTION_MODE,
       runtimeMode,
       branch: session.gitBranch ?? null,
       worktreePath: null,

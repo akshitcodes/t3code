@@ -7,8 +7,11 @@ import type {
   ProviderModelOptions,
 } from "@t3tools/contracts";
 
-export const ORDERED_PROVIDER_KINDS = ["codex", "claudeAgent", "copilot"] as const satisfies
-  ReadonlyArray<ProviderKind>;
+export const ORDERED_PROVIDER_KINDS = [
+  "codex",
+  "claudeAgent",
+  "copilot",
+] as const satisfies ReadonlyArray<ProviderKind>;
 
 export function buildModelSelection(
   provider: ProviderKind,

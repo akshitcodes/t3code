@@ -139,7 +139,11 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
     Effect.map((allSettings) => allSettings.providers.copilot),
   );
   const checkedAt = new Date().toISOString();
-  const fallbackModels = providerModelsFromSettings(BUILT_IN_MODELS, PROVIDER, settings.customModels);
+  const fallbackModels = providerModelsFromSettings(
+    BUILT_IN_MODELS,
+    PROVIDER,
+    settings.customModels,
+  );
 
   if (!settings.enabled) {
     return buildServerProvider({

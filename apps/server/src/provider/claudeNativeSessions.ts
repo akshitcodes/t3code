@@ -149,9 +149,8 @@ function sessionTitleFromSummary(input: {
 function toClaudeModelSelection(model: string | undefined): ModelSelection {
   const trimmed = asTrimmedString(model)?.toLowerCase();
   const canonical =
-    (trimmed
-      ? MODEL_SLUG_ALIASES_BY_PROVIDER.claudeAgent[trimmed] ?? trimmed
-      : undefined) ?? DEFAULT_MODEL_BY_PROVIDER.claudeAgent;
+    (trimmed ? (MODEL_SLUG_ALIASES_BY_PROVIDER.claudeAgent[trimmed] ?? trimmed) : undefined) ??
+    DEFAULT_MODEL_BY_PROVIDER.claudeAgent;
   return {
     provider: "claudeAgent",
     model: canonical,
@@ -240,7 +239,9 @@ export function summarizeClaudeNativeSessionFile(
           ? timestamp
           : earliestTimestamp;
       latestTimestamp =
-        !latestTimestamp || compareIso(timestamp, latestTimestamp) > 0 ? timestamp : latestTimestamp;
+        !latestTimestamp || compareIso(timestamp, latestTimestamp) > 0
+          ? timestamp
+          : latestTimestamp;
     }
 
     cwd = asTrimmedString(parsed.cwd) ?? cwd;

@@ -1058,20 +1058,20 @@ export function GeneralSettingsPanel() {
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                 onModelOptionsChange={(nextOptions) => {
                   updateSettings({
-                        textGenerationModelSelection: resolveAppModelSelectionState(
-                          {
-                            ...settings,
-                            textGenerationModelSelection: buildModelSelection(
-                              textGenProvider,
-                              textGenModel,
-                              nextOptions,
-                            ),
-                          },
-                          serverProviders,
+                    textGenerationModelSelection: resolveAppModelSelectionState(
+                      {
+                        ...settings,
+                        textGenerationModelSelection: buildModelSelection(
+                          textGenProvider,
+                          textGenModel,
+                          nextOptions,
                         ),
-                      });
-                    }}
-                  />
+                      },
+                      serverProviders,
+                    ),
+                  });
+                }}
+              />
             </div>
           }
         />
@@ -1217,32 +1217,32 @@ export function GeneralSettingsPanel() {
                         <label
                           htmlFor={`provider-install-${providerCard.provider}-binary-path`}
                           className="block"
-                      >
-                        <span className="text-xs font-medium text-foreground">
-                          {providerDisplayName} binary path
-                        </span>
-                        <Input
-                          id={`provider-install-${providerCard.provider}-binary-path`}
-                          className="mt-1.5"
-                          value={providerCard.binaryPathValue}
-                          onChange={(event) =>
-                            updateSettings({
-                              providers: {
-                                ...settings.providers,
-                                [providerCard.provider]: {
-                                  ...settings.providers[providerCard.provider],
-                                  binaryPath: event.target.value,
+                        >
+                          <span className="text-xs font-medium text-foreground">
+                            {providerDisplayName} binary path
+                          </span>
+                          <Input
+                            id={`provider-install-${providerCard.provider}-binary-path`}
+                            className="mt-1.5"
+                            value={providerCard.binaryPathValue}
+                            onChange={(event) =>
+                              updateSettings({
+                                providers: {
+                                  ...settings.providers,
+                                  [providerCard.provider]: {
+                                    ...settings.providers[providerCard.provider],
+                                    binaryPath: event.target.value,
+                                  },
                                 },
-                              },
-                            })
-                          }
-                          placeholder={providerCard.binaryPlaceholder}
-                          spellCheck={false}
-                        />
-                        <span className="mt-1 block text-xs text-muted-foreground">
-                          {providerCard.binaryDescription}
-                        </span>
-                      </label>
+                              })
+                            }
+                            placeholder={providerCard.binaryPlaceholder}
+                            spellCheck={false}
+                          />
+                          <span className="mt-1 block text-xs text-muted-foreground">
+                            {providerCard.binaryDescription}
+                          </span>
+                        </label>
                       </div>
                     ) : null}
 
