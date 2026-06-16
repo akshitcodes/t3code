@@ -26,6 +26,7 @@ import {
   ProviderInstanceId,
   ResolvedKeybindingRule,
   ThreadId,
+  TurnId,
   WS_METHODS,
   WsRpcGroup,
   EditorId,
@@ -5563,6 +5564,246 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (sessionStopCommand?.type === "thread.session.stop") {
         assert.equal(sessionStopCommand.threadId, threadId);
       }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("starts plan reviews server-side without client activity appends", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const sourceThread = makeDefaultOrchestrationReadModel().threads[0]!;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailById: (threadId) =>
+              Effect.succeed(
+                threadId === defaultThreadId ? Option.some(sourceThread) : Option.none(),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.startPlanReview]({
+            sourceThreadId: defaultThreadId,
+            reviewerProvider: ProviderDriverKind.make("codex"),
+            payload: "Review this plan critically.",
+          }),
+        ),
+      );
+
+      assert.equal(result.reviewerThreadTitle, "Review: Default Thread (Codex)");
+      assert.equal(result.createdThread, true);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        [
+          "thread.create",
+          "thread.activity.append",
+          "thread.activity.append",
+          "thread.activity.append",
+          "thread.activity.append",
+          "thread.turn.start",
+        ],
+      );
+      assert.equal(result.sequence, dispatchedCommands.length);
+      const finalCommand = dispatchedCommands[5];
+      assertTrue(finalCommand?.type === "thread.turn.start");
+      if (finalCommand?.type === "thread.turn.start") {
+        assert.equal(finalCommand.message.text.includes("DECISION: update-plan"), true);
+        assert.equal(finalCommand.threadId, result.reviewerThreadId);
+        assert.equal(finalCommand.interactionMode, "plan");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("continues plan reviews by sending only the latest source-agent reply", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const sourceTurnId = TurnId.make("turn-source-2");
+      const reviewerThreadId = ThreadId.make("thread-review");
+      const baseThread = makeDefaultOrchestrationReadModel().threads[0]!;
+      const sourceThread = {
+        ...baseThread,
+        latestTurn: {
+          turnId: sourceTurnId,
+          state: "completed" as const,
+          requestedAt: "2026-04-06T10:01:00.000Z",
+          startedAt: "2026-04-06T10:01:00.000Z",
+          updatedAt: "2026-04-06T10:02:00.000Z",
+          endedAt: "2026-04-06T10:02:00.000Z",
+          completedAt: "2026-04-06T10:02:00.000Z",
+          assistantMessageId: MessageId.make("msg-source-assistant"),
+          providerRequests: [],
+          pendingApprovalRequest: null,
+          pendingUserInputRequest: null,
+          sourceProposedPlanId: null,
+        },
+        messages: [
+          {
+            id: MessageId.make("msg-source-assistant"),
+            role: "assistant" as const,
+            text: "Updated plan:\n1. Add rollback\n2. Add smoke tests",
+            attachments: [],
+            turnId: sourceTurnId,
+            streaming: false,
+            createdAt: "2026-04-06T10:02:00.000Z",
+            updatedAt: "2026-04-06T10:02:00.000Z",
+          },
+        ],
+        activities: [
+          {
+            id: EventId.make("evt-review-complete"),
+            tone: "info" as const,
+            kind: "plan-review.completed",
+            summary: "Codex review received",
+            payload: {
+              reviewId: "review-1",
+              sourceThreadId: defaultThreadId,
+              reviewerThreadId,
+              reviewerProvider: "codex",
+              requestPrompt: "Updated plan:\n1. Add rollback\n2. Add smoke tests",
+              rootRequestPrompt: "Original review payload",
+              round: 1,
+              decision: "update-plan",
+              assistantMessageId: "msg-review-1",
+            },
+            turnId: null,
+            createdAt: "2026-04-06T10:01:00.000Z",
+          },
+        ],
+      };
+      const reviewerThread = {
+        ...sourceThread,
+        id: reviewerThreadId,
+        title: "Review: Default Thread (Codex)",
+        activities: [],
+        messages: [],
+        latestTurn: null,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailById: (threadId) =>
+              Effect.succeed(
+                threadId === defaultThreadId
+                  ? Option.some(sourceThread)
+                  : threadId === reviewerThreadId
+                    ? Option.some(reviewerThread)
+                    : Option.none(),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.continuePlanReview]({
+            sourceThreadId: defaultThreadId,
+          }),
+        ),
+      );
+
+      assert.equal(result.reviewerThreadId, reviewerThreadId);
+      assert.equal(result.createdThread, false);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.activity.append", "thread.activity.append", "thread.turn.start"],
+      );
+      assert.equal(result.sequence, dispatchedCommands.length);
+      const finalCommand = dispatchedCommands[2];
+      assertTrue(finalCommand?.type === "thread.turn.start");
+      if (finalCommand?.type === "thread.turn.start") {
+        assert.equal(
+          finalCommand.message.text.includes("Updated plan:\n1. Add rollback\n2. Add smoke tests"),
+          true,
+        );
+        assert.equal(finalCommand.message.text.includes("Original review payload"), false);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("finishes active plan reviews by appending finish markers", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const reviewerThreadId = ThreadId.make("thread-review");
+      const baseThread = makeDefaultOrchestrationReadModel().threads[0]!;
+      const sourceThread = {
+        ...baseThread,
+        activities: [
+          {
+            id: EventId.make("evt-review-complete"),
+            tone: "info" as const,
+            kind: "plan-review.completed",
+            summary: "Codex review received",
+            payload: {
+              reviewId: "review-1",
+              sourceThreadId: defaultThreadId,
+              reviewerThreadId,
+              reviewerProvider: "codex",
+              requestPrompt: "Round 1 reply",
+              rootRequestPrompt: "Original review payload",
+              round: 1,
+              decision: "go-forward",
+            },
+            turnId: null,
+            createdAt: "2026-04-06T10:01:00.000Z",
+          },
+        ],
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailById: (threadId) =>
+              Effect.succeed(
+                threadId === defaultThreadId ? Option.some(sourceThread) : Option.none(),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.finishPlanReview]({
+            sourceThreadId: defaultThreadId,
+          }),
+        ),
+      );
+
+      assert.equal(result.sequence, 1);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.activity.append", "thread.activity.append"],
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

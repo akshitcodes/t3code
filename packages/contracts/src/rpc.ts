@@ -596,6 +596,33 @@ export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationStartPlanReviewRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.startPlanReview,
+  {
+    payload: OrchestrationRpcSchemas.startPlanReview.input,
+    success: OrchestrationRpcSchemas.startPlanReview.output,
+    error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsOrchestrationContinuePlanReviewRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.continuePlanReview,
+  {
+    payload: OrchestrationRpcSchemas.continuePlanReview.input,
+    success: OrchestrationRpcSchemas.continuePlanReview.output,
+    error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsOrchestrationFinishPlanReviewRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.finishPlanReview,
+  {
+    payload: OrchestrationRpcSchemas.finishPlanReview.input,
+    success: OrchestrationRpcSchemas.finishPlanReview.output,
+    error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsOrchestrationGetTurnDiffRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getTurnDiff, {
   payload: OrchestrationGetTurnDiffInput,
   success: OrchestrationRpcSchemas.getTurnDiff.output,
@@ -741,6 +768,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
   WsOrchestrationDispatchCommandRpc,
+  WsOrchestrationStartPlanReviewRpc,
+  WsOrchestrationContinuePlanReviewRpc,
+  WsOrchestrationFinishPlanReviewRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationReplayEventsRpc,

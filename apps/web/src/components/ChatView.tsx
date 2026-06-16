@@ -44,8 +44,21 @@ import { readLocalApi } from "../localApi";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
   collapseExpandedComposerCursor,
+  parseStandaloneComposerReviewCommand,
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
+import {
+  findLatestActivePlanReview,
+  findLinkedPlanReviewThread,
+  providerLabel,
+} from "@t3tools/shared/review";
+import {
+  buildPlanReviewDraftPreview,
+  canSubmitPlanReviewDraft,
+  createPlanReviewDraft,
+  type PlanReviewDraftState,
+} from "../lib/planReviewDraft";
+import { PlanReviewDialog } from "./PlanReviewDialog";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -67,7 +80,12 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { selectEnvironmentState, selectProjectsAcrossEnvironments, useStore } from "../store";
+import {
+  selectEnvironmentState,
+  selectProjectsAcrossEnvironments,
+  selectThreadsForEnvironment,
+  useStore,
+} from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
@@ -1185,6 +1203,7 @@ function ChatViewContent(props: ChatViewProps) {
   const [pendingServerThreadEnvMode, setPendingServerThreadEnvMode] =
     useState<DraftThreadEnvMode | null>(null);
   const [pendingServerThreadBranch, setPendingServerThreadBranch] = useState<string | null>();
+  const [planReviewDraft, setPlanReviewDraft] = useState<PlanReviewDraftState | null>(null);
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useLocalStorage(
     LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
     {},
@@ -1824,6 +1843,37 @@ function ChatViewContent(props: ChatViewProps) {
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const threadsInActiveEnvironment = useStore((state) =>
+    selectThreadsForEnvironment(state, activeThread?.environmentId ?? null),
+  );
+  const linkedReviewThread = useMemo(() => {
+    if (!activeThread) {
+      return null;
+    }
+    const linkedThreadId = findLinkedPlanReviewThread(
+      activeThread.activities,
+      "source",
+    )?.linkedThreadId;
+    return linkedThreadId
+      ? (threadsInActiveEnvironment.find((thread) => thread.id === linkedThreadId) ?? null)
+      : null;
+  }, [activeThread, threadsInActiveEnvironment]);
+  const linkedSourceThread = useMemo(() => {
+    if (!activeThread) {
+      return null;
+    }
+    const linkedThreadId = findLinkedPlanReviewThread(
+      activeThread.activities,
+      "reviewer",
+    )?.linkedThreadId;
+    return linkedThreadId
+      ? (threadsInActiveEnvironment.find((thread) => thread.id === linkedThreadId) ?? null)
+      : null;
+  }, [activeThread, threadsInActiveEnvironment]);
+  const activePlanReviewSession = useMemo(
+    () => (activeThread ? findLatestActivePlanReview(activeThread.activities) : null),
+    [activeThread],
+  );
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
@@ -1895,6 +1945,34 @@ function ChatViewContent(props: ChatViewProps) {
     interactionMode === "plan" &&
     latestTurnSettled &&
     hasActionableProposedPlan(activeProposedPlan);
+  const showPlanReviewLoopActions =
+    linkedReviewThread !== null &&
+    activePlanReviewSession?.status === "completed" &&
+    latestTurnSettled;
+  const planReviewPreviewText = useMemo(
+    () =>
+      planReviewDraft
+        ? buildPlanReviewDraftPreview({
+            goalText: planReviewDraft.goalText,
+            planText: planReviewDraft.planText,
+            extraContext: planReviewDraft.extraContext,
+          })
+        : "",
+    [planReviewDraft],
+  );
+  const canSubmitPlanReviewDialog = useMemo(
+    () =>
+      planReviewDraft
+        ? canSubmitPlanReviewDraft({
+            goalText: planReviewDraft.goalText,
+            planText: planReviewDraft.planText,
+          })
+        : false,
+    [planReviewDraft],
+  );
+  useEffect(() => {
+    setPlanReviewDraft(null);
+  }, [activeThread?.id]);
   const activePendingApproval = pendingApprovals[0] ?? null;
   const {
     beginLocalDispatch,
@@ -3654,6 +3732,20 @@ function ChatViewContent(props: ChatViewProps) {
       terminalContexts: composerTerminalContexts,
       elementContextCount: composerElementContexts.length + composerPreviewAnnotations.length,
     });
+    const standaloneReviewCommand =
+      composerImages.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      composerElementContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0
+        ? parseStandaloneComposerReviewCommand(trimmed)
+        : null;
+    if (standaloneReviewCommand) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      openPlanReviewDialog(standaloneReviewCommand);
+      return;
+    }
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -4258,6 +4350,236 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  const closePlanReviewDialog = useCallback(() => {
+    setPlanReviewDraft(null);
+  }, []);
+
+  const openPlanReviewDialog = useCallback(
+    (input: { reviewerProvider: ProviderDriverKind; extraContext: string }) => {
+      if (
+        !activeThread ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        activeEnvironmentUnavailable ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+
+      setPlanReviewDraft(
+        createPlanReviewDraft({
+          reviewerProvider: input.reviewerProvider,
+          messages: activeThread.messages,
+          proposedPlan: activeProposedPlan,
+          initialExtraContext: input.extraContext,
+        }),
+      );
+    },
+    [
+      activeProposedPlan,
+      activeThread,
+      activeEnvironmentUnavailable,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+    ],
+  );
+
+  const updatePlanReviewDraft = useCallback(
+    (updates: Partial<Pick<PlanReviewDraftState, "goalText" | "planText" | "extraContext">>) => {
+      setPlanReviewDraft((existing) => (existing ? { ...existing, ...updates } : existing));
+    },
+    [],
+  );
+
+  const onRequestPlanReview = useCallback(
+    async (input: { reviewerProvider: ProviderDriverKind; payload: string }) => {
+      const api = readEnvironmentApi(environmentId);
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        activeEnvironmentUnavailable ||
+        sendInFlightRef.current
+      ) {
+        return false;
+      }
+
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      setThreadError(activeThread.id, null);
+
+      try {
+        const review = await api.orchestration.startPlanReview({
+          sourceThreadId: activeThread.id,
+          reviewerProvider: input.reviewerProvider,
+          payload: input.payload,
+        });
+
+        toastManager.add({
+          type: "success",
+          title: `${providerLabel(input.reviewerProvider)} review started`,
+          description: review.reviewerThreadTitle,
+        });
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to start plan review.";
+        setThreadError(activeThread.id, message);
+        toastManager.add({
+          type: "error",
+          title: "Failed to start plan review",
+          description: message,
+        });
+        return false;
+      } finally {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+      }
+    },
+    [
+      activeThread,
+      activeEnvironmentUnavailable,
+      beginLocalDispatch,
+      environmentId,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      resetLocalDispatch,
+      setThreadError,
+    ],
+  );
+
+  const onSubmitPlanReviewDraft = useCallback(async () => {
+    if (
+      !planReviewDraft ||
+      !canSubmitPlanReviewDraft({
+        goalText: planReviewDraft.goalText,
+        planText: planReviewDraft.planText,
+      })
+    ) {
+      return;
+    }
+
+    const didStart = await onRequestPlanReview({
+      reviewerProvider: planReviewDraft.reviewerProvider,
+      payload: buildPlanReviewDraftPreview({
+        goalText: planReviewDraft.goalText,
+        planText: planReviewDraft.planText,
+        extraContext: planReviewDraft.extraContext,
+      }),
+    });
+
+    if (didStart) {
+      setPlanReviewDraft(null);
+    }
+  }, [onRequestPlanReview, planReviewDraft]);
+
+  const onContinuePlanReview = useCallback(async () => {
+    const api = readEnvironmentApi(environmentId);
+    if (
+      !api ||
+      !activeThread ||
+      !isServerThread ||
+      isSendBusy ||
+      isConnecting ||
+      activeEnvironmentUnavailable ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
+
+    sendInFlightRef.current = true;
+    beginLocalDispatch({ preparingWorktree: false });
+    setThreadError(activeThread.id, null);
+
+    try {
+      const review = await api.orchestration.continuePlanReview({
+        sourceThreadId: activeThread.id,
+      });
+
+      toastManager.add({
+        type: "success",
+        title: "Review iteration started",
+        description: review.reviewerThreadTitle,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to continue plan review.";
+      setThreadError(activeThread.id, message);
+      toastManager.add({
+        type: "error",
+        title: "Failed to continue plan review",
+        description: message,
+      });
+    } finally {
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+    }
+  }, [
+    activeThread,
+    activeEnvironmentUnavailable,
+    beginLocalDispatch,
+    environmentId,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    resetLocalDispatch,
+    setThreadError,
+  ]);
+
+  const onFinishPlanReview = useCallback(async () => {
+    const api = readEnvironmentApi(environmentId);
+    if (
+      !api ||
+      !activeThread ||
+      !isServerThread ||
+      isSendBusy ||
+      isConnecting ||
+      activeEnvironmentUnavailable ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
+
+    sendInFlightRef.current = true;
+    beginLocalDispatch({ preparingWorktree: false });
+    setThreadError(activeThread.id, null);
+
+    try {
+      await api.orchestration.finishPlanReview({
+        sourceThreadId: activeThread.id,
+      });
+
+      toastManager.add({
+        type: "success",
+        title: "Review finished",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to finish plan review.";
+      setThreadError(activeThread.id, message);
+      toastManager.add({
+        type: "error",
+        title: "Failed to finish plan review",
+        description: message,
+      });
+    } finally {
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+    }
+  }, [
+    activeThread,
+    activeEnvironmentUnavailable,
+    beginLocalDispatch,
+    environmentId,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    resetLocalDispatch,
+    setThreadError,
+  ]);
+
   const onImplementPlanInNewThread = useCallback(async () => {
     const api = readEnvironmentApi(environmentId);
     if (
@@ -4609,6 +4931,31 @@ function ChatViewContent(props: ChatViewProps) {
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
             activeProjectName={activeProject?.name}
+            linkedThreadLabel={
+              linkedReviewThread
+                ? `Review: ${linkedReviewThread.title}`
+                : linkedSourceThread
+                  ? `Reviewing: ${linkedSourceThread.title}`
+                  : undefined
+            }
+            linkedThreadTitle={linkedReviewThread?.title ?? linkedSourceThread?.title}
+            onOpenLinkedThread={
+              linkedReviewThread || linkedSourceThread
+                ? () => {
+                    const linkedThread = linkedReviewThread ?? linkedSourceThread;
+                    if (!linkedThread) {
+                      return;
+                    }
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: {
+                        environmentId: linkedThread.environmentId,
+                        threadId: linkedThread.id,
+                      },
+                    });
+                  }
+                : undefined
+            }
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}
             preferredScriptId={
@@ -4631,6 +4978,45 @@ function ChatViewContent(props: ChatViewProps) {
           error={activeThread.error}
           onDismiss={() => setThreadError(activeThread.id, null)}
         />
+        {showPlanReviewLoopActions && activePlanReviewSession ? (
+          <div className="border-b border-border/70 bg-muted/20 px-3 py-2 sm:px-5">
+            <div className="mx-auto flex w-full max-w-[52rem] items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-foreground">
+                  {activePlanReviewSession.decision === "go-forward"
+                    ? "External review says this can likely go forward."
+                    : "External review asked for another revision."}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Round {activePlanReviewSession.round}. You can run one more review iteration or
+                  finish this review session.
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void onContinuePlanReview()}
+                  disabled={isSendBusy || isConnecting || sendInFlightRef.current}
+                >
+                  Do one more iteration
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void onFinishPlanReview()}
+                  disabled={isSendBusy || isConnecting || sendInFlightRef.current}
+                  variant={
+                    activePlanReviewSession.decision === "go-forward" ? "default" : "outline"
+                  }
+                >
+                  Finish review
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
@@ -4802,6 +5188,22 @@ function ChatViewContent(props: ChatViewProps) {
                   }
                 }}
                 onPrepared={handlePreparedPullRequestThread}
+              />
+            ) : null}
+            {planReviewDraft ? (
+              <PlanReviewDialog
+                open
+                draft={planReviewDraft}
+                previewText={planReviewPreviewText}
+                canSubmit={canSubmitPlanReviewDialog}
+                isSubmitting={isSendBusy}
+                onOpenChange={(open) => {
+                  if (!open) {
+                    closePlanReviewDialog();
+                  }
+                }}
+                onDraftChange={updatePlanReviewDraft}
+                onSubmit={() => void onSubmitPlanReviewDraft()}
               />
             ) : null}
           </div>

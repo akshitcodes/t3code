@@ -22,9 +22,16 @@ import {
   type AuthEnvironmentScope,
   AuthSessionId,
   CommandId,
+  DEFAULT_MODEL,
+  DEFAULT_MODEL_BY_PROVIDER,
+  defaultInstanceIdForDriver,
   type DiscoveredLocalServerList,
   EventId,
+  MessageId,
+  type ModelSelection,
   type OrchestrationCommand,
+  type OrchestrationThread,
+  type ProviderDriverKind,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
@@ -108,6 +115,17 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import {
+  buildPlanReviewIterationRequestPrompt,
+  buildPlanReviewRequestPrompt,
+  buildPlanReviewThreadTitle,
+  findLatestActivePlanReview,
+  findLinkedPlanReviewThread,
+  PLAN_REVIEW_FINISHED_ACTIVITY_KIND,
+  PLAN_REVIEW_LINK_ACTIVITY_KIND,
+  PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
+  providerLabel,
+} from "@t3tools/shared/review";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 
@@ -139,6 +157,9 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
+  [ORCHESTRATION_WS_METHODS.startPlanReview, AuthOrchestrationOperateScope],
+  [ORCHESTRATION_WS_METHODS.continuePlanReview, AuthOrchestrationOperateScope],
+  [ORCHESTRATION_WS_METHODS.finishPlanReview, AuthOrchestrationOperateScope],
   [ORCHESTRATION_WS_METHODS.getTurnDiff, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getFullThreadDiff, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.replayEvents, AuthOrchestrationReadScope],
@@ -750,6 +771,188 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           );
       };
 
+      const appendPlanReviewActivity = (input: {
+        readonly threadId: ThreadId;
+        readonly kind: string;
+        readonly summary: string;
+        readonly createdAt: string;
+        readonly payload: Record<string, unknown>;
+        readonly tone?: "info" | "error";
+      }) =>
+        Effect.all({
+          commandId: serverCommandId("plan-review-activity"),
+          activityId: serverEventId,
+        }).pipe(
+          Effect.flatMap(({ commandId, activityId }) =>
+            orchestrationEngine
+              .dispatch({
+                type: "thread.activity.append",
+                commandId,
+                threadId: input.threadId,
+                activity: {
+                  id: activityId,
+                  tone: input.tone ?? "info",
+                  kind: input.kind,
+                  summary: input.summary,
+                  payload: input.payload,
+                  turnId: null,
+                  createdAt: input.createdAt,
+                },
+                createdAt: input.createdAt,
+              })
+              .pipe(
+                Effect.mapError((cause) =>
+                  toDispatchCommandError(cause, "Failed to append plan review activity"),
+                ),
+              ),
+          ),
+        );
+
+      const resolveReviewerModelSelection = (reviewerProvider: ProviderDriverKind) =>
+        providerRegistry.getProviders.pipe(
+          Effect.map((providers): ModelSelection => {
+            const snapshot = providers.find((entry) => entry.driver === reviewerProvider);
+            const model =
+              snapshot?.models.find((entry) => !entry.isCustom)?.slug ??
+              snapshot?.models[0]?.slug ??
+              DEFAULT_MODEL_BY_PROVIDER[reviewerProvider] ??
+              DEFAULT_MODEL;
+
+            return {
+              instanceId: snapshot?.instanceId ?? defaultInstanceIdForDriver(reviewerProvider),
+              model,
+            };
+          }),
+        );
+
+      const startPlanReviewRound = (input: {
+        readonly sourceThread: OrchestrationThread;
+        readonly reviewerProvider: ProviderDriverKind;
+        readonly reviewerThreadId?: ThreadId | undefined;
+        readonly reviewerThreadTitle?: string | undefined;
+        readonly requestPrompt: string;
+        readonly rootRequestPrompt: string;
+        readonly round: number;
+        readonly reviewPrompt: string;
+        readonly createdAt: string;
+      }) =>
+        Effect.gen(function* () {
+          const reviewerThread =
+            input.reviewerThreadId === undefined
+              ? null
+              : ((yield* projectionSnapshotQuery
+                  .getThreadDetailById(input.reviewerThreadId)
+                  .pipe(Effect.map(Option.getOrUndefined))) ?? null);
+          const reviewerThreadId =
+            reviewerThread?.id ?? input.reviewerThreadId ?? ThreadId.make(yield* randomUUID);
+          const reviewerThreadTitle =
+            reviewerThread?.title ??
+            input.reviewerThreadTitle ??
+            buildPlanReviewThreadTitle(input.sourceThread.title, input.reviewerProvider);
+          const reviewerModelSelection = yield* resolveReviewerModelSelection(
+            input.reviewerProvider,
+          );
+          const reviewPayload = {
+            reviewId: `review:${yield* randomUUID}`,
+            sourceThreadId: input.sourceThread.id,
+            reviewerThreadId,
+            reviewerProvider: input.reviewerProvider,
+            requestPrompt: input.requestPrompt,
+            rootRequestPrompt: input.rootRequestPrompt,
+            round: input.round,
+          };
+
+          if (!reviewerThread) {
+            yield* orchestrationEngine
+              .dispatch({
+                type: "thread.create",
+                commandId: yield* serverCommandId("plan-review-thread-create"),
+                threadId: reviewerThreadId,
+                projectId: input.sourceThread.projectId,
+                title: reviewerThreadTitle,
+                modelSelection: reviewerModelSelection,
+                runtimeMode: input.sourceThread.runtimeMode,
+                interactionMode: "plan",
+                branch: input.sourceThread.branch,
+                worktreePath: input.sourceThread.worktreePath,
+                createdAt: input.createdAt,
+              })
+              .pipe(
+                Effect.mapError((cause) =>
+                  toDispatchCommandError(cause, "Failed to create plan review thread"),
+                ),
+              );
+
+            yield* appendPlanReviewActivity({
+              threadId: input.sourceThread.id,
+              kind: PLAN_REVIEW_LINK_ACTIVITY_KIND,
+              summary: `Linked ${providerLabel(input.reviewerProvider)} review thread`,
+              payload: {
+                role: "source",
+                linkedThreadId: reviewerThreadId,
+                reviewerProvider: input.reviewerProvider,
+              },
+              createdAt: input.createdAt,
+            });
+            yield* appendPlanReviewActivity({
+              threadId: reviewerThreadId,
+              kind: PLAN_REVIEW_LINK_ACTIVITY_KIND,
+              summary: "Linked review source thread",
+              payload: {
+                role: "reviewer",
+                linkedThreadId: input.sourceThread.id,
+                reviewerProvider: input.reviewerProvider,
+              },
+              createdAt: input.createdAt,
+            });
+          }
+
+          yield* appendPlanReviewActivity({
+            threadId: input.sourceThread.id,
+            kind: PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
+            summary: `${providerLabel(input.reviewerProvider)} review requested`,
+            payload: reviewPayload,
+            createdAt: input.createdAt,
+          });
+          yield* appendPlanReviewActivity({
+            threadId: reviewerThreadId,
+            kind: PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
+            summary: "Plan review requested",
+            payload: reviewPayload,
+            createdAt: input.createdAt,
+          });
+
+          const dispatchResult = yield* orchestrationEngine
+            .dispatch({
+              type: "thread.turn.start",
+              commandId: yield* serverCommandId("plan-review-turn-start"),
+              threadId: reviewerThreadId,
+              message: {
+                messageId: MessageId.make(`plan-review:${yield* randomUUID}`),
+                role: "user",
+                text: input.reviewPrompt,
+                attachments: [],
+              },
+              modelSelection: reviewerModelSelection,
+              titleSeed: reviewerThreadTitle,
+              runtimeMode: input.sourceThread.runtimeMode,
+              interactionMode: "plan",
+              createdAt: input.createdAt,
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                toDispatchCommandError(cause, "Failed to start plan review turn"),
+              ),
+            );
+
+          return {
+            sequence: dispatchResult.sequence,
+            reviewerThreadId,
+            reviewerThreadTitle,
+            createdThread: reviewerThread === null,
+          } as const;
+        });
+
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const providers = yield* providerRegistry.getProviders;
@@ -850,6 +1053,176 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                     }),
               ),
             ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.startPlanReview]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.startPlanReview,
+            startup
+              .enqueueCommand(
+                Effect.gen(function* () {
+                  const createdAt = yield* nowIso;
+                  const sourceThread = yield* projectionSnapshotQuery
+                    .getThreadDetailById(input.sourceThreadId)
+                    .pipe(Effect.map(Option.getOrUndefined));
+                  if (!sourceThread) {
+                    return yield* new OrchestrationDispatchCommandError({
+                      message: `Source thread '${input.sourceThreadId}' was not found.`,
+                    });
+                  }
+
+                  const linkedReviewThread = findLinkedPlanReviewThread(
+                    sourceThread.activities,
+                    "source",
+                    input.reviewerProvider,
+                  );
+                  return yield* startPlanReviewRound({
+                    sourceThread,
+                    reviewerProvider: input.reviewerProvider,
+                    reviewerThreadId: linkedReviewThread?.linkedThreadId,
+                    requestPrompt: input.payload,
+                    rootRequestPrompt: input.payload,
+                    round: 1,
+                    reviewPrompt: buildPlanReviewRequestPrompt({ payload: input.payload }),
+                    createdAt,
+                  });
+                }),
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  toDispatchCommandError(cause, "Failed to start plan review"),
+                ),
+              ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.continuePlanReview]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.continuePlanReview,
+            startup
+              .enqueueCommand(
+                Effect.gen(function* () {
+                  const createdAt = yield* nowIso;
+                  const sourceThread = yield* projectionSnapshotQuery
+                    .getThreadDetailById(input.sourceThreadId)
+                    .pipe(Effect.map(Option.getOrUndefined));
+                  if (!sourceThread) {
+                    return yield* new OrchestrationDispatchCommandError({
+                      message: `Source thread '${input.sourceThreadId}' was not found.`,
+                    });
+                  }
+
+                  const activeReview = findLatestActivePlanReview(sourceThread.activities);
+                  if (!activeReview) {
+                    return yield* new OrchestrationDispatchCommandError({
+                      message: "No active plan review session was found for this thread.",
+                    });
+                  }
+                  if (activeReview.status !== "completed") {
+                    return yield* new OrchestrationDispatchCommandError({
+                      message: "The latest plan review round has not completed yet.",
+                    });
+                  }
+
+                  const sourceTurnId = sourceThread.latestTurn?.turnId ?? null;
+                  const latestAssistantMessage = [...sourceThread.messages]
+                    .toReversed()
+                    .find(
+                      (message) =>
+                        message.role === "assistant" &&
+                        sourceTurnId !== null &&
+                        message.turnId === sourceTurnId,
+                    );
+                  if (!latestAssistantMessage?.text.trim()) {
+                    return yield* new OrchestrationDispatchCommandError({
+                      message:
+                        "Could not find the latest source-agent reply to send for another review iteration.",
+                    });
+                  }
+
+                  const reviewerThread = yield* projectionSnapshotQuery
+                    .getThreadDetailById(activeReview.reviewerThreadId)
+                    .pipe(Effect.map(Option.getOrUndefined));
+
+                  return yield* startPlanReviewRound({
+                    sourceThread,
+                    reviewerProvider: activeReview.reviewerProvider,
+                    reviewerThreadId: activeReview.reviewerThreadId,
+                    reviewerThreadTitle: reviewerThread?.title,
+                    requestPrompt: latestAssistantMessage.text,
+                    rootRequestPrompt: activeReview.rootRequestPrompt,
+                    round: activeReview.round + 1,
+                    reviewPrompt: buildPlanReviewIterationRequestPrompt({
+                      latestSourceResponse: latestAssistantMessage.text,
+                    }),
+                    createdAt,
+                  });
+                }),
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  toDispatchCommandError(cause, "Failed to continue plan review"),
+                ),
+              ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.finishPlanReview]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.finishPlanReview,
+            startup
+              .enqueueCommand(
+                Effect.gen(function* () {
+                  const createdAt = yield* nowIso;
+                  const sourceThread = yield* projectionSnapshotQuery
+                    .getThreadDetailById(input.sourceThreadId)
+                    .pipe(Effect.map(Option.getOrUndefined));
+                  if (!sourceThread) {
+                    return yield* new OrchestrationDispatchCommandError({
+                      message: `Source thread '${input.sourceThreadId}' was not found.`,
+                    });
+                  }
+
+                  const activeReview = findLatestActivePlanReview(sourceThread.activities);
+                  if (!activeReview) {
+                    return yield* new OrchestrationDispatchCommandError({
+                      message: "No active plan review session was found for this thread.",
+                    });
+                  }
+
+                  const result = yield* appendPlanReviewActivity({
+                    threadId: sourceThread.id,
+                    kind: PLAN_REVIEW_FINISHED_ACTIVITY_KIND,
+                    summary: `${providerLabel(activeReview.reviewerProvider)} review finished`,
+                    payload: {
+                      reviewId: activeReview.reviewId,
+                      sourceThreadId: activeReview.sourceThreadId,
+                      reviewerThreadId: activeReview.reviewerThreadId,
+                      reviewerProvider: activeReview.reviewerProvider,
+                      round: activeReview.round,
+                    },
+                    createdAt,
+                  });
+                  yield* appendPlanReviewActivity({
+                    threadId: activeReview.reviewerThreadId,
+                    kind: PLAN_REVIEW_FINISHED_ACTIVITY_KIND,
+                    summary: "Review session finished",
+                    payload: {
+                      reviewId: activeReview.reviewId,
+                      sourceThreadId: activeReview.sourceThreadId,
+                      reviewerThreadId: activeReview.reviewerThreadId,
+                      reviewerProvider: activeReview.reviewerProvider,
+                      round: activeReview.round,
+                    },
+                    createdAt,
+                  });
+
+                  return result;
+                }),
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  toDispatchCommandError(cause, "Failed to finish plan review"),
+                ),
+              ),
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.getTurnDiff]: (input) =>

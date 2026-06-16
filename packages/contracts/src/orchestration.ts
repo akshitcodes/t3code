@@ -20,10 +20,13 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
+  startPlanReview: "orchestration.startPlanReview",
+  continuePlanReview: "orchestration.continuePlanReview",
+  finishPlanReview: "orchestration.finishPlanReview",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   replayEvents: "orchestration.replayEvents",
@@ -1187,6 +1190,38 @@ export const DispatchResult = Schema.Struct({
 });
 export type DispatchResult = typeof DispatchResult.Type;
 
+export const OrchestrationStartPlanReviewInput = Schema.Struct({
+  sourceThreadId: ThreadId,
+  reviewerProvider: ProviderDriverKind,
+  payload: TrimmedNonEmptyString,
+});
+export type OrchestrationStartPlanReviewInput = typeof OrchestrationStartPlanReviewInput.Type;
+
+export const OrchestrationStartPlanReviewResult = Schema.Struct({
+  sequence: NonNegativeInt,
+  reviewerThreadId: ThreadId,
+  reviewerThreadTitle: TrimmedNonEmptyString,
+  createdThread: Schema.Boolean,
+});
+export type OrchestrationStartPlanReviewResult = typeof OrchestrationStartPlanReviewResult.Type;
+
+export const OrchestrationContinuePlanReviewInput = Schema.Struct({
+  sourceThreadId: ThreadId,
+});
+export type OrchestrationContinuePlanReviewInput = typeof OrchestrationContinuePlanReviewInput.Type;
+
+export const OrchestrationContinuePlanReviewResult = OrchestrationStartPlanReviewResult;
+export type OrchestrationContinuePlanReviewResult =
+  typeof OrchestrationContinuePlanReviewResult.Type;
+
+export const OrchestrationFinishPlanReviewInput = Schema.Struct({
+  sourceThreadId: ThreadId,
+});
+export type OrchestrationFinishPlanReviewInput = typeof OrchestrationFinishPlanReviewInput.Type;
+
+export const OrchestrationFinishPlanReviewResult = DispatchResult;
+export type OrchestrationFinishPlanReviewResult = typeof OrchestrationFinishPlanReviewResult.Type;
+
 export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
@@ -1221,6 +1256,18 @@ export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
     output: DispatchResult,
+  },
+  startPlanReview: {
+    input: OrchestrationStartPlanReviewInput,
+    output: OrchestrationStartPlanReviewResult,
+  },
+  continuePlanReview: {
+    input: OrchestrationContinuePlanReviewInput,
+    output: OrchestrationContinuePlanReviewResult,
+  },
+  finishPlanReview: {
+    input: OrchestrationFinishPlanReviewInput,
+    output: OrchestrationFinishPlanReviewResult,
   },
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,

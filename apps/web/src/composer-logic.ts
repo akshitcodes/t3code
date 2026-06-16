@@ -1,8 +1,15 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
+
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
+
+export interface ComposerReviewCommand {
+  reviewerProvider: ProviderDriverKind;
+  extraContext: string;
+}
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -265,6 +272,21 @@ export function parseStandaloneComposerSlashCommand(
   const command = match[1]?.toLowerCase();
   if (command === "plan") return "plan";
   return "default";
+}
+
+export function parseStandaloneComposerReviewCommand(text: string): ComposerReviewCommand | null {
+  const match = /^\/review\s+--(codex|claude|claudeagent)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  if (!match?.[1]) {
+    return null;
+  }
+  const provider = match[1].toLowerCase();
+  return {
+    reviewerProvider:
+      provider === "codex"
+        ? ProviderDriverKind.make("codex")
+        : ProviderDriverKind.make("claudeAgent"),
+    extraContext: (match[2] ?? "").trim(),
+  };
 }
 
 export function replaceTextRange(

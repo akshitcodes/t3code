@@ -87,6 +87,9 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     },
     orchestration: {
       dispatchCommand: vi.fn(),
+      startPlanReview: vi.fn(),
+      continuePlanReview: vi.fn(),
+      finishPlanReview: vi.fn(),
       getTurnDiff: vi.fn(),
       getFullThreadDiff: vi.fn(),
       getArchivedShellSnapshot: vi.fn(),

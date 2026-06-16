@@ -1,3 +1,4 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -6,6 +7,7 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  parseStandaloneComposerReviewCommand,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
@@ -346,5 +348,36 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+  });
+});
+
+describe("parseStandaloneComposerReviewCommand", () => {
+  it("maps --codex to the codex driver kind", () => {
+    expect(parseStandaloneComposerReviewCommand("/review --codex")).toEqual({
+      reviewerProvider: ProviderDriverKind.make("codex"),
+      extraContext: "",
+    });
+  });
+
+  it("maps --claude to the claudeAgent driver kind", () => {
+    expect(parseStandaloneComposerReviewCommand("/review --claude")).toEqual({
+      reviewerProvider: ProviderDriverKind.make("claudeAgent"),
+      extraContext: "",
+    });
+  });
+
+  it("captures trailing extra context", () => {
+    expect(
+      parseStandaloneComposerReviewCommand("/review --codex focus on rollback safety"),
+    ).toEqual({
+      reviewerProvider: ProviderDriverKind.make("codex"),
+      extraContext: "focus on rollback safety",
+    });
+  });
+
+  it("returns null without a recognized provider flag", () => {
+    expect(parseStandaloneComposerReviewCommand("/review")).toBeNull();
+    expect(parseStandaloneComposerReviewCommand("/review --copilot")).toBeNull();
+    expect(parseStandaloneComposerReviewCommand("just review this")).toBeNull();
   });
 });

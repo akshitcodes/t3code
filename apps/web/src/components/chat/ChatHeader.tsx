@@ -9,6 +9,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { SidebarTrigger } from "../ui/sidebar";
@@ -22,6 +23,9 @@ interface ChatHeaderProps {
   draftId?: DraftId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  linkedThreadLabel?: string | undefined;
+  linkedThreadTitle?: string | undefined;
+  onOpenLinkedThread?: (() => void) | undefined;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
   preferredScriptId: string | null;
@@ -53,6 +57,9 @@ export const ChatHeader = memo(function ChatHeader({
   draftId,
   activeThreadTitle,
   activeProjectName,
+  linkedThreadLabel,
+  linkedThreadTitle,
+  onOpenLinkedThread,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
@@ -88,6 +95,18 @@ export const ChatHeader = memo(function ChatHeader({
           />
           <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
         </Tooltip>
+        {linkedThreadLabel && linkedThreadTitle && onOpenLinkedThread && (
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            className="h-6 max-w-full shrink"
+            onClick={onOpenLinkedThread}
+            title={linkedThreadTitle}
+          >
+            <span className="truncate">{linkedThreadLabel}</span>
+          </Button>
+        )}
       </div>
       <div
         data-chat-header-actions

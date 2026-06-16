@@ -87,11 +87,17 @@ import {
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
+  OrchestrationContinuePlanReviewInput,
+  OrchestrationContinuePlanReviewResult,
+  OrchestrationFinishPlanReviewInput,
+  OrchestrationFinishPlanReviewResult,
   OrchestrationGetFullThreadDiffResult,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
   OrchestrationShellSnapshot,
   OrchestrationShellStreamItem,
+  OrchestrationStartPlanReviewInput,
+  OrchestrationStartPlanReviewResult,
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
@@ -1164,6 +1170,15 @@ export interface EnvironmentApi {
   };
   orchestration: {
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;
+    startPlanReview: (
+      input: OrchestrationStartPlanReviewInput,
+    ) => Promise<OrchestrationStartPlanReviewResult>;
+    continuePlanReview: (
+      input: OrchestrationContinuePlanReviewInput,
+    ) => Promise<OrchestrationContinuePlanReviewResult>;
+    finishPlanReview: (
+      input: OrchestrationFinishPlanReviewInput,
+    ) => Promise<OrchestrationFinishPlanReviewResult>;
     getTurnDiff: (input: OrchestrationGetTurnDiffInput) => Promise<OrchestrationGetTurnDiffResult>;
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,

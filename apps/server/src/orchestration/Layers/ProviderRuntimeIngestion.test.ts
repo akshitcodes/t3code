@@ -22,6 +22,11 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import {
+  PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
+  PLAN_REVIEW_LINK_ACTIVITY_KIND,
+  PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
+} from "@t3tools/shared/review";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -309,12 +314,14 @@ describe("ProviderRuntimeIngestion", () => {
       updatedAt: createdAt,
     });
 
+    const activeRuntime = runtime;
     return {
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
+      run: <A, E>(effect: Effect.Effect<A, E>) => activeRuntime.runPromise(effect),
     };
   }
 
@@ -3059,5 +3066,206 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime still processed");
+  });
+
+  it("bridges a completed linked plan review back into the source thread", async () => {
+    const harness = await createHarness();
+    const sourceThreadId = asThreadId("thread-source-review");
+    const reviewerThreadId = asThreadId("thread-reviewer");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const reviewerTurnId = asTurnId("turn-reviewer");
+
+    await harness.run(
+      Effect.gen(function* () {
+        yield* harness.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-create-source-review"),
+          threadId: sourceThreadId,
+          projectId: asProjectId("project-1"),
+          title: "Source Thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-4-5",
+          },
+          interactionMode: "plan",
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-create-reviewer"),
+          threadId: reviewerThreadId,
+          projectId: asProjectId("project-1"),
+          title: "Review Thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: "plan",
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-reviewer"),
+          threadId: reviewerThreadId,
+          session: {
+            threadId: reviewerThreadId,
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            updatedAt: createdAt,
+            lastError: null,
+          },
+          createdAt,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-source-review-link"),
+          threadId: sourceThreadId,
+          activity: {
+            id: asEventId("evt-source-review-link"),
+            tone: "info",
+            kind: PLAN_REVIEW_LINK_ACTIVITY_KIND,
+            summary: "Linked Codex review thread",
+            payload: {
+              role: "source",
+              linkedThreadId: reviewerThreadId,
+              reviewerProvider: "codex",
+            },
+            turnId: null,
+            createdAt,
+          },
+          createdAt,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-review-request"),
+          threadId: reviewerThreadId,
+          activity: {
+            id: asEventId("evt-review-request"),
+            tone: "info",
+            kind: PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
+            summary: "Plan review requested",
+            payload: {
+              reviewId: "review-1",
+              sourceThreadId,
+              reviewerThreadId,
+              reviewerProvider: "codex",
+              requestPrompt: "Please review this plan.",
+            },
+            turnId: null,
+            createdAt,
+          },
+          createdAt,
+        });
+      }),
+    );
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "ready",
+      runtimeMode: "approval-required",
+      threadId: reviewerThreadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: reviewerTurnId,
+    });
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-review-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: reviewerThreadId,
+      turnId: reviewerTurnId,
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-review-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: reviewerThreadId,
+      turnId: reviewerTurnId,
+      itemId: asItemId("item-review-delta"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: `DECISION: update-plan
+
+The plan is close, but it is missing a rollback step.
+
+- Add a rollback step before rollout.
+- Clarify migration sequencing.`,
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-review-item-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: reviewerThreadId,
+      turnId: reviewerTurnId,
+      itemId: asItemId("item-review-delta"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-review-complete"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: reviewerThreadId,
+      turnId: reviewerTurnId,
+      payload: {
+        state: "completed",
+      },
+    });
+
+    const sourceThread = await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.role === "user" &&
+            message.text.startsWith("[Automated external review from Codex]"),
+        ) &&
+        thread.activities.some(
+          (activity: ProviderRuntimeTestActivity) =>
+            activity.kind === PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
+        ),
+      2_000,
+      sourceThreadId,
+    );
+
+    expect(
+      sourceThread.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.role === "user" && message.text.includes("DECISION: update-plan"),
+      ),
+    ).toBe(true);
+
+    const reviewerThread = await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.activities.some(
+          (activity: ProviderRuntimeTestActivity) =>
+            activity.kind === PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
+        ),
+      2_000,
+      reviewerThreadId,
+    );
+    expect(
+      reviewerThread.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.kind === PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
+      ),
+    ).toBe(true);
   });
 });
