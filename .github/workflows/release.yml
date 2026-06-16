@@ -135,10 +135,15 @@ jobs:
               exit 1
             fi
 
+            # Fork branding: prefix the GitHub Release name on the fork owner.
+            release_prefix=""
+            if [[ "${{ github.repository_owner }}" == "akshitcodes" ]]; then
+              release_prefix="Akshit "
+            fi
             echo "release_channel=stable" >> "$GITHUB_OUTPUT"
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "tag=v$version" >> "$GITHUB_OUTPUT"
-            echo "name=T3 Code v$version" >> "$GITHUB_OUTPUT"
+            echo "name=${release_prefix}T3 Code v$version" >> "$GITHUB_OUTPUT"
             echo "cli_dist_tag=latest" >> "$GITHUB_OUTPUT"
             if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
@@ -169,7 +174,10 @@ jobs:
   relay_public_config:
     name: Resolve T3 Connect public config
     needs: preflight
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    # Fork-friendly: T3 Connect relay config requires the upstream `production`
+    # environment + Clerk/relay secrets, so only run it on the canonical repo.
+    # Forks skip this job; downstream `build` tolerates the skip (see below).
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && github.repository == 'pingdotgg/t3code' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
     environment:
@@ -221,7 +229,10 @@ jobs:
   build:
     name: Build ${{ matrix.label }}
     needs: [preflight, relay_public_config]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
+    # Fork-friendly: on forks `relay_public_config` is skipped, so tolerate it.
+    # The T3CODE_CLERK_*/T3CODE_RELAY_URL env vars below resolve to empty strings
+    # in that case, which simply disables the hosted T3 Connect integration.
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && (needs.relay_public_config.result == 'success' || needs.relay_public_config.result == 'skipped') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
@@ -480,7 +491,8 @@ jobs:
   publish_cli:
     name: Publish CLI to npm
     needs: [preflight, relay_public_config, build]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build.result == 'success' }}
+    # Fork-friendly: npm publish is upstream-only (needs npm OIDC + relay config).
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build.result == 'success' && github.repository == 'pingdotgg/t3code' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
@@ -523,12 +535,20 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [preflight, build, publish_cli]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
+    # Fork-friendly: on forks `publish_cli` is skipped, so tolerate the skip and
+    # publish the GitHub Release with the desktop artifacts only.
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && (needs.publish_cli.result == 'success' || needs.publish_cli.result == 'skipped') }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
+    permissions:
+      # Lets the default GITHUB_TOKEN create the release on forks that don't have
+      # the RELEASE_APP_* secrets configured.
+      contents: write
     steps:
       - id: app_token
         name: Mint release app token
+        # Upstream-only: forks fall back to GITHUB_TOKEN for publishing the release.
+        if: github.repository == 'pingdotgg/t3code'
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
@@ -615,7 +635,7 @@ jobs:
             release-assets/*.blockmap
             release-assets/*.yml
           fail_on_unmatched_files: true
-          token: ${{ steps.app_token.outputs.token }}
+          token: ${{ steps.app_token.outputs.token || github.token }}
 
       - name: Publish first release
         if: needs.preflight.outputs.previous_tag == ''
@@ -635,12 +655,13 @@ jobs:
             release-assets/*.blockmap
             release-assets/*.yml
           fail_on_unmatched_files: true
-          token: ${{ steps.app_token.outputs.token }}
+          token: ${{ steps.app_token.outputs.token || github.token }}
 
   deploy_web:
     name: Deploy hosted web app
     needs: [preflight, relay_public_config, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' }}
+    # Fork-friendly: hosted web deploy is upstream-only (needs Vercel secrets).
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' && github.repository == 'pingdotgg/t3code' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
@@ -734,7 +755,9 @@ jobs:
 
   finalize:
     name: Finalize release
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
+    # Fork-friendly: the post-release version-bump commit is upstream-only
+    # (pushes to main via the RELEASE_APP_* GitHub App identity).
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' && github.repository == 'pingdotgg/t3code' }}
     needs: [preflight, release]
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
