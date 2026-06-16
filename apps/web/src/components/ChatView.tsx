@@ -1843,8 +1843,8 @@ function ChatViewContent(props: ChatViewProps) {
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
-  const threadsInActiveEnvironment = useStore((state) =>
-    selectThreadsForEnvironment(state, activeThread?.environmentId ?? null),
+  const threadsInActiveEnvironment = useStore(
+    useShallow((state) => selectThreadsForEnvironment(state, activeThread?.environmentId ?? null)),
   );
   const linkedReviewThread = useMemo(() => {
     if (!activeThread) {
