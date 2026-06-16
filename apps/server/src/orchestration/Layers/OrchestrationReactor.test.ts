@@ -1,11 +1,17 @@
-import { Effect, Exit, Layer, ManagedRuntime, Scope } from "effect";
-import { afterEach, describe, expect, it } from "vitest";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Scope from "effect/Scope";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
+import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
 import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
+import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 
 describe("OrchestrationReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<OrchestrationReactor, never> | null = null;
@@ -17,7 +23,7 @@ describe("OrchestrationReactor", () => {
     runtime = null;
   });
 
-  it("starts provider ingestion, provider command, and checkpoint reactors", async () => {
+  it("starts provider ingestion, provider command, checkpoint, and thread deletion reactors", async () => {
     const started: string[] = [];
 
     runtime = ManagedRuntime.make(
@@ -49,10 +55,28 @@ describe("OrchestrationReactor", () => {
             drain: Effect.void,
           }),
         ),
+        Layer.provideMerge(
+          Layer.succeed(ThreadDeletionReactor, {
+            start: () => {
+              started.push("thread-deletion-reactor");
+              return Effect.void;
+            },
+            drain: Effect.void,
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(AgentAwarenessRelay.AgentAwarenessRelay, {
+            publishThread: () => Effect.void,
+            start: () => {
+              started.push("agent-awareness-relay");
+              return Effect.void;
+            },
+          }),
+        ),
       ),
     );
 
-    const reactor = await runtime.runPromise(Effect.service(OrchestrationReactor));
+    const reactor = await runtime!.runPromise(Effect.service(OrchestrationReactor));
     const scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
 
@@ -60,6 +84,8 @@ describe("OrchestrationReactor", () => {
       "provider-runtime-ingestion",
       "provider-command-reactor",
       "checkpoint-reactor",
+      "thread-deletion-reactor",
+      "agent-awareness-relay",
     ]);
 
     await Effect.runPromise(Scope.close(scope, Exit.void));

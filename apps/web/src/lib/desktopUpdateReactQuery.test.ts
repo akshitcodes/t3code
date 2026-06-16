@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import {
   desktopUpdateQueryKeys,
@@ -10,6 +10,7 @@ import {
 const baseState: DesktopUpdateState = {
   enabled: true,
   status: "idle",
+  channel: "latest",
   currentVersion: "1.0.0",
   hostArch: "x64",
   appArch: "x64",

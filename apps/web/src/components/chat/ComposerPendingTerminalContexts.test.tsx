@@ -1,6 +1,6 @@
 import { ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { ComposerPendingTerminalContextChip } from "./ComposerPendingTerminalContexts";
 
@@ -10,7 +10,7 @@ describe("ComposerPendingTerminalContextChip", () => {
       <ComposerPendingTerminalContextChip
         context={{
           id: "ctx-expired",
-          threadId: ThreadId.makeUnsafe("thread-1"),
+          threadId: ThreadId.make("thread-1"),
           terminalId: "default",
           terminalLabel: "Terminal 1",
           lineStart: 2,

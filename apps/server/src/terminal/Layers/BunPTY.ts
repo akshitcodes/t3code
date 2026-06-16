@@ -1,13 +1,20 @@
-import { Effect, Layer } from "effect";
-import { PtyAdapter, PtyAdapterShape, PtyExitEvent, PtyProcess } from "../Services/PTY";
+/// <reference types="bun" />
+
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { PtyAdapter } from "../Services/PTY.ts";
+import type { PtyAdapterShape, PtyExitEvent, PtyProcess } from "../Services/PTY.ts";
 
 class BunPtyProcess implements PtyProcess {
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly exitListeners = new Set<(event: PtyExitEvent) => void>();
   private readonly decoder = new TextDecoder();
+  private readonly process: Bun.Subprocess;
   private didExit = false;
 
-  constructor(private readonly process: Bun.Subprocess) {
+  constructor(process: Bun.Subprocess) {
+    this.process = process;
     void this.process.exited
       .then((exitCode) => {
         this.emitExit({
@@ -89,7 +96,8 @@ class BunPtyProcess implements PtyProcess {
 export const layer = Layer.effect(
   PtyAdapter,
   Effect.gen(function* () {
-    if (process.platform === "win32") {
+    const platform = yield* HostProcessPlatform;
+    if (platform === "win32") {
       return yield* Effect.die(
         "Bun PTY terminal support is unavailable on Windows. Please use Node.js (e.g. by running `npx t3`) instead.",
       );

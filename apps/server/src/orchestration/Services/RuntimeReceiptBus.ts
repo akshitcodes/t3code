@@ -15,8 +15,10 @@
  * @module RuntimeReceiptBus
  */
 import { CheckpointRef, IsoDateTime, NonNegativeInt, ThreadId, TurnId } from "@t3tools/contracts";
-import { Schema, ServiceMap } from "effect";
-import type { Effect, Stream } from "effect";
+import * as Schema from "effect/Schema";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
+import type * as Stream from "effect/Stream";
 
 export const CheckpointBaselineCapturedReceipt = Schema.Struct({
   type: Schema.Literal("checkpoint.baseline.captured"),
@@ -59,7 +61,6 @@ export interface RuntimeReceiptBusShape {
   readonly streamEventsForTest: Stream.Stream<OrchestrationRuntimeReceipt>;
 }
 
-export class RuntimeReceiptBus extends ServiceMap.Service<
-  RuntimeReceiptBus,
-  RuntimeReceiptBusShape
->()("t3/orchestration/Services/RuntimeReceiptBus") {}
+export class RuntimeReceiptBus extends Context.Service<RuntimeReceiptBus, RuntimeReceiptBusShape>()(
+  "t3/orchestration/Services/RuntimeReceiptBus",
+) {}

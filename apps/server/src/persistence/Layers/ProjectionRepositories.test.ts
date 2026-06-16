@@ -1,6 +1,8 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
-import { Effect, Layer, Option } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
@@ -24,11 +26,11 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       const sql = yield* SqlClient.SqlClient;
 
       yield* projects.upsert({
-        projectId: ProjectId.makeUnsafe("project-null-options"),
+        projectId: ProjectId.make("project-null-options"),
         title: "Null options project",
         workspaceRoot: "/tmp/project-null-options",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
         },
         scripts: [],
@@ -46,22 +48,23 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       `;
       const row = rows[0];
       if (!row) {
-        return yield* Effect.fail(new Error("Expected projection_projects row to exist."));
+        return yield* Effect.die("Expected projection_projects row to exist.");
       }
 
       assert.strictEqual(
         row.defaultModelSelection,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
         JSON.stringify({
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
         }),
       );
 
       const persisted = yield* projects.getById({
-        projectId: ProjectId.makeUnsafe("project-null-options"),
+        projectId: ProjectId.make("project-null-options"),
       });
       assert.deepStrictEqual(Option.getOrNull(persisted)?.defaultModelSelection, {
-        provider: "codex",
+        instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
       });
     }),
@@ -73,11 +76,11 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       const sql = yield* SqlClient.SqlClient;
 
       yield* threads.upsert({
-        threadId: ThreadId.makeUnsafe("thread-null-options"),
-        projectId: ProjectId.makeUnsafe("project-null-options"),
+        threadId: ThreadId.make("thread-null-options"),
+        projectId: ProjectId.make("project-null-options"),
         title: "Null options thread",
         modelSelection: {
-          provider: "claudeAgent",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-opus-4-6",
         },
         runtimeMode: "full-access",
@@ -88,6 +91,10 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
         archivedAt: null,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
         deletedAt: null,
       });
 
@@ -100,22 +107,23 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       `;
       const row = rows[0];
       if (!row) {
-        return yield* Effect.fail(new Error("Expected projection_threads row to exist."));
+        return yield* Effect.die("Expected projection_threads row to exist.");
       }
 
       assert.strictEqual(
         row.modelSelection,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
         JSON.stringify({
-          provider: "claudeAgent",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-opus-4-6",
         }),
       );
 
       const persisted = yield* threads.getById({
-        threadId: ThreadId.makeUnsafe("thread-null-options"),
+        threadId: ThreadId.make("thread-null-options"),
       });
       assert.deepStrictEqual(Option.getOrNull(persisted)?.modelSelection, {
-        provider: "claudeAgent",
+        instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-opus-4-6",
       });
     }),

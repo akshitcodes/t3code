@@ -15,12 +15,14 @@ import {
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   activePlan: boolean;
   interactionMode: ProviderInteractionMode;
+  planSidebarLabel: string;
   planSidebarOpen: boolean;
   runtimeMode: RuntimeMode;
+  showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
   onToggleInteractionMode: () => void;
   onTogglePlanSidebar: () => void;
-  onToggleRuntimeMode: () => void;
+  onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   return (
     <Menu>
@@ -43,27 +45,32 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             <MenuDivider />
           </>
         ) : null}
-        <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Mode</div>
-        <MenuRadioGroup
-          value={props.interactionMode}
-          onValueChange={(value) => {
-            if (!value || value === props.interactionMode) return;
-            props.onToggleInteractionMode();
-          }}
-        >
-          <MenuRadioItem value="default">Chat</MenuRadioItem>
-          <MenuRadioItem value="plan">Plan</MenuRadioItem>
-        </MenuRadioGroup>
-        <MenuDivider />
+        {props.showInteractionModeToggle ? (
+          <>
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Mode</div>
+            <MenuRadioGroup
+              value={props.interactionMode}
+              onValueChange={(value) => {
+                if (!value || value === props.interactionMode) return;
+                props.onToggleInteractionMode();
+              }}
+            >
+              <MenuRadioItem value="default">Chat</MenuRadioItem>
+              <MenuRadioItem value="plan">Plan</MenuRadioItem>
+            </MenuRadioGroup>
+            <MenuDivider />
+          </>
+        ) : null}
         <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Access</div>
         <MenuRadioGroup
           value={props.runtimeMode}
           onValueChange={(value) => {
             if (!value || value === props.runtimeMode) return;
-            props.onToggleRuntimeMode();
+            props.onRuntimeModeChange(value as RuntimeMode);
           }}
         >
           <MenuRadioItem value="approval-required">Supervised</MenuRadioItem>
+          <MenuRadioItem value="auto-accept-edits">Auto-accept edits</MenuRadioItem>
           <MenuRadioItem value="full-access">Full access</MenuRadioItem>
         </MenuRadioGroup>
         {props.activePlan ? (
@@ -71,7 +78,9 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             <MenuDivider />
             <MenuItem onClick={props.onTogglePlanSidebar}>
               <ListTodoIcon className="size-4 shrink-0" />
-              {props.planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"}
+              {props.planSidebarOpen
+                ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
+                : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`}
             </MenuItem>
           </>
         ) : null}

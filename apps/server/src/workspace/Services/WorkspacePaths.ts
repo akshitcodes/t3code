@@ -6,8 +6,9 @@
  *
  * @module WorkspacePaths
  */
-import { Schema, ServiceMap } from "effect";
-import type { Effect } from "effect";
+import * as Schema from "effect/Schema";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
 
 export class WorkspaceRootNotExistsError extends Schema.TaggedErrorClass<WorkspaceRootNotExistsError>()(
   "WorkspaceRootNotExistsError",
@@ -18,6 +19,18 @@ export class WorkspaceRootNotExistsError extends Schema.TaggedErrorClass<Workspa
 ) {
   override get message(): string {
     return `Workspace root does not exist: ${this.normalizedWorkspaceRoot}`;
+  }
+}
+
+export class WorkspaceRootCreateFailedError extends Schema.TaggedErrorClass<WorkspaceRootCreateFailedError>()(
+  "WorkspaceRootCreateFailedError",
+  {
+    workspaceRoot: Schema.String,
+    normalizedWorkspaceRoot: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Failed to create workspace root: ${this.normalizedWorkspaceRoot}`;
   }
 }
 
@@ -47,6 +60,7 @@ export class WorkspacePathOutsideRootError extends Schema.TaggedErrorClass<Works
 
 export const WorkspacePathsError = Schema.Union([
   WorkspaceRootNotExistsError,
+  WorkspaceRootCreateFailedError,
   WorkspaceRootNotDirectoryError,
   WorkspacePathOutsideRootError,
 ]);
@@ -61,7 +75,11 @@ export interface WorkspacePathsShape {
    */
   readonly normalizeWorkspaceRoot: (
     workspaceRoot: string,
-  ) => Effect.Effect<string, WorkspaceRootNotExistsError | WorkspaceRootNotDirectoryError>;
+    options?: { readonly createIfMissing?: boolean },
+  ) => Effect.Effect<
+    string,
+    WorkspaceRootNotExistsError | WorkspaceRootCreateFailedError | WorkspaceRootNotDirectoryError
+  >;
 
   /**
    * Resolve a relative path within a validated workspace root.
@@ -80,6 +98,6 @@ export interface WorkspacePathsShape {
 /**
  * WorkspacePaths - Service tag for workspace path normalization and resolution.
  */
-export class WorkspacePaths extends ServiceMap.Service<WorkspacePaths, WorkspacePathsShape>()(
+export class WorkspacePaths extends Context.Service<WorkspacePaths, WorkspacePathsShape>()(
   "t3/workspace/Services/WorkspacePaths",
 ) {}

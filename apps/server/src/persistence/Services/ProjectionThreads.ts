@@ -9,14 +9,17 @@
 import {
   IsoDateTime,
   ModelSelection,
+  NonNegativeInt,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { Option, Schema, ServiceMap } from "effect";
-import type { Effect } from "effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../Errors.ts";
 
@@ -33,6 +36,10 @@ export const ProjectionThread = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
+  latestUserMessageAt: Schema.NullOr(IsoDateTime),
+  pendingApprovalCount: NonNegativeInt,
+  pendingUserInputCount: NonNegativeInt,
+  hasActionableProposedPlan: NonNegativeInt,
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;
@@ -90,7 +97,7 @@ export interface ProjectionThreadRepositoryShape {
 /**
  * ProjectionThreadRepository - Service tag for thread projection persistence.
  */
-export class ProjectionThreadRepository extends ServiceMap.Service<
+export class ProjectionThreadRepository extends Context.Service<
   ProjectionThreadRepository,
   ProjectionThreadRepositoryShape
 >()("t3/persistence/Services/ProjectionThreads/ProjectionThreadRepository") {}

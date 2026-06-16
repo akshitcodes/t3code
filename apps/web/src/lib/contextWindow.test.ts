@@ -1,16 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { EventId, type OrchestrationThreadActivity, TurnId } from "@t3tools/contracts";
 
 import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow";
 
 function makeActivity(id: string, kind: string, payload: unknown): OrchestrationThreadActivity {
   return {
-    id: EventId.makeUnsafe(id),
+    id: EventId.make(id),
     tone: "info",
     kind,
     summary: kind,
     payload,
-    turnId: TurnId.makeUnsafe("turn-1"),
+    turnId: TurnId.make("turn-1"),
     createdAt: "2026-03-23T00:00:00.000Z",
   };
 }
@@ -42,6 +42,23 @@ describe("contextWindow", () => {
     ]);
 
     expect(snapshot).toBeNull();
+  });
+
+  it("keeps valid zero-usage snapshots", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([
+      makeActivity("activity-1", "context-window.updated", {
+        usedTokens: 0,
+        maxTokens: 100_000,
+      }),
+    ]);
+
+    expect(snapshot).toMatchObject({
+      usedTokens: 0,
+      maxTokens: 100_000,
+      remainingTokens: 100_000,
+      usedPercentage: 0,
+      remainingPercentage: 100,
+    });
   });
 
   it("formats compact token counts", () => {

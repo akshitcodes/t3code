@@ -6,8 +6,8 @@
  *
  * @module ProjectFaviconResolver
  */
-import { ServiceMap } from "effect";
-import type { Effect } from "effect";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
 
 /**
  * ProjectFaviconResolverShape - Service API for project favicon lookup.
@@ -24,7 +24,7 @@ export interface ProjectFaviconResolverShape {
 /**
  * ProjectFaviconResolver - Service tag for project favicon resolution.
  */
-export class ProjectFaviconResolver extends ServiceMap.Service<
+export class ProjectFaviconResolver extends Context.Service<
   ProjectFaviconResolver,
   ProjectFaviconResolverShape
 >()("t3/project/Services/ProjectFaviconResolver") {}

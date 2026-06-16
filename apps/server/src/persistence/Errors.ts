@@ -1,4 +1,5 @@
-import { Schema, SchemaIssue } from "effect";
+import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
 
 // ===============================
 // Core Persistence Errors
@@ -9,7 +10,7 @@ export class PersistenceSqlError extends Schema.TaggedErrorClass<PersistenceSqlE
   {
     operation: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -22,13 +23,15 @@ export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceD
   {
     operation: Schema.String,
     issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     return `Decode error in ${this.operation}: ${this.issue}`;
   }
 }
+const isPersistenceSqlError = Schema.is(PersistenceSqlError);
+const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
 export function toPersistenceSqlError(operation: string) {
   return (cause: unknown): PersistenceSqlError =>
@@ -58,7 +61,7 @@ export function toPersistenceDecodeCauseError(operation: string) {
 }
 
 export const isPersistenceError = (u: unknown) =>
-  Schema.is(PersistenceSqlError)(u) || Schema.is(PersistenceDecodeError)(u);
+  isPersistenceSqlError(u) || isPersistenceDecodeError(u);
 
 // ===============================
 // Provider Session Repository Errors
@@ -69,7 +72,7 @@ export class ProviderSessionRepositoryValidationError extends Schema.TaggedError
   {
     operation: Schema.String,
     issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -82,7 +85,7 @@ export class ProviderSessionRepositoryPersistenceError extends Schema.TaggedErro
   {
     operation: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -101,5 +104,7 @@ export type OrchestrationCommandReceiptRepositoryError =
   | PersistenceDecodeError;
 
 export type ProviderSessionRuntimeRepositoryError = PersistenceSqlError | PersistenceDecodeError;
+export type AuthPairingLinkRepositoryError = PersistenceSqlError | PersistenceDecodeError;
+export type AuthSessionRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 
 export type ProjectionRepositoryError = PersistenceSqlError | PersistenceDecodeError;

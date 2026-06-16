@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { ProviderDriverKind } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildPlanReviewDraftPreview,
@@ -32,7 +33,7 @@ function makeProposedPlan(planMarkdown: string): ProposedPlan {
 describe("createPlanReviewDraft", () => {
   it("uses the first user message as the goal and the latest proposed plan as the plan", () => {
     const draft = createPlanReviewDraft({
-      reviewerProvider: "codex",
+      reviewerProvider: ProviderDriverKind.make("codex"),
       messages: [
         makeMessage({ id: "m1", role: "user", text: "Ship the login flow safely." }),
         makeMessage({ id: "m2", role: "assistant", text: "I will inspect the auth routes." }),
@@ -42,7 +43,7 @@ describe("createPlanReviewDraft", () => {
     });
 
     expect(draft).toEqual({
-      reviewerProvider: "codex",
+      reviewerProvider: ProviderDriverKind.make("codex"),
       goalText: "Ship the login flow safely.",
       goalSourceLabel: "Auto-selected from the first user message",
       planText: "1. Add routes\n2. Add tests",
@@ -53,7 +54,7 @@ describe("createPlanReviewDraft", () => {
 
   it("falls back to the latest assistant message when there is no proposed plan", () => {
     const draft = createPlanReviewDraft({
-      reviewerProvider: "claudeAgent",
+      reviewerProvider: ProviderDriverKind.make("claudeAgent"),
       messages: [
         makeMessage({ id: "m1", role: "user", text: "Fix the reconnect bug." }),
         makeMessage({ id: "m2", role: "assistant", text: "Initial thought" }),
@@ -72,7 +73,7 @@ describe("createPlanReviewDraft", () => {
 
   it("shows empty-state labels when the thread does not have enough content", () => {
     const draft = createPlanReviewDraft({
-      reviewerProvider: "copilot",
+      reviewerProvider: ProviderDriverKind.make("codex"),
       messages: [],
       proposedPlan: null,
     });

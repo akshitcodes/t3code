@@ -19,7 +19,7 @@ import { Skeleton } from "~/components/ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
@@ -77,7 +77,7 @@ const SidebarContext = React.createContext<SidebarContextProps | null>(null);
 const SidebarInstanceContext = React.createContext<SidebarInstanceContextProps | null>(null);
 
 function useSidebar() {
-  const context = React.useContext(SidebarContext);
+  const context = React.use(SidebarContext);
   if (!context) {
     throw new Error("useSidebar must be used within a SidebarProvider.");
   }
@@ -148,7 +148,7 @@ function SidebarProvider({
   );
 
   return (
-    <SidebarContext.Provider value={contextValue}>
+    <SidebarContext value={contextValue}>
       <div
         className={cn(
           "group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar",
@@ -166,7 +166,7 @@ function SidebarProvider({
       >
         {children}
       </div>
-    </SidebarContext.Provider>
+    </SidebarContext>
   );
 }
 
@@ -206,7 +206,7 @@ function Sidebar({
 
   if (collapsible === "none") {
     return (
-      <SidebarInstanceContext.Provider value={instanceContextValue}>
+      <SidebarInstanceContext value={instanceContextValue}>
         <div
           className={cn(
             "flex h-full w-(--sidebar-width) flex-col bg-sidebar text-sidebar-foreground",
@@ -217,13 +217,13 @@ function Sidebar({
         >
           {children}
         </div>
-      </SidebarInstanceContext.Provider>
+      </SidebarInstanceContext>
     );
   }
 
   if (isMobile) {
     return (
-      <SidebarInstanceContext.Provider value={instanceContextValue}>
+      <SidebarInstanceContext value={instanceContextValue}>
         <Sheet onOpenChange={setOpenMobile} open={openMobile} {...props}>
           <SheetPopup
             className={cn(
@@ -245,15 +245,22 @@ function Sidebar({
               <SheetTitle>Sidebar</SheetTitle>
               <SheetDescription>Displays the mobile sidebar.</SheetDescription>
             </SheetHeader>
-            <div className="flex h-full w-full flex-col">{children}</div>
+            <div
+              className={cn(
+                "flex h-full w-full flex-col pb-safe pt-safe",
+                side === "left" ? "pl-safe" : "pr-safe",
+              )}
+            >
+              {children}
+            </div>
           </SheetPopup>
         </Sheet>
-      </SidebarInstanceContext.Provider>
+      </SidebarInstanceContext>
     );
   }
 
   return (
-    <SidebarInstanceContext.Provider value={instanceContextValue}>
+    <SidebarInstanceContext value={instanceContextValue}>
       <div
         className="group peer hidden text-sidebar-foreground md:block"
         data-collapsible={state === "collapsed" ? collapsible : ""}
@@ -298,7 +305,7 @@ function Sidebar({
           </div>
         </div>
       </div>
-    </SidebarInstanceContext.Provider>
+    </SidebarInstanceContext>
   );
 }
 
@@ -338,7 +345,7 @@ function SidebarRail({
   ...props
 }: React.ComponentProps<"button">) {
   const { open, toggleSidebar } = useSidebar();
-  const sidebarInstance = React.useContext(SidebarInstanceContext);
+  const sidebarInstance = React.use(SidebarInstanceContext);
   const railRef = React.useRef<HTMLButtonElement | null>(null);
   const suppressClickRef = React.useRef(false);
   const resizeStateRef = React.useRef<{
@@ -565,31 +572,37 @@ function SidebarRail({
   }, []);
 
   return (
-    <button
-      aria-label={railLabel}
-      className={cn(
-        /* disable pointer events only when offcanvas sidebar is collapsed, that's when the rail sits over the native scrollbar on windows and linux. icon mode stays fully clickable. */
-        "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
-        "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",
-        "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
-        "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
-        "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
-        "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
-        className,
-      )}
-      data-sidebar="rail"
-      data-slot="sidebar-rail"
-      onClick={handleClick}
-      onPointerCancel={handlePointerCancel}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      ref={railRef}
-      tabIndex={-1}
-      title={railTitle}
-      type="button"
-      {...props}
-    />
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            aria-label={railLabel}
+            className={cn(
+              /* disable pointer events only when offcanvas sidebar is collapsed, that's when the rail sits over the native scrollbar on windows and linux. icon mode stays fully clickable. */
+              "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
+              "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",
+              "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
+              "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
+              "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
+              "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
+              className,
+            )}
+            data-sidebar="rail"
+            data-slot="sidebar-rail"
+            onClick={handleClick}
+            onPointerCancel={handlePointerCancel}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            ref={railRef}
+            tabIndex={-1}
+            type="button"
+            {...props}
+          />
+        }
+      />
+      <TooltipPopup side="right">{railTitle}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -882,7 +895,7 @@ function SidebarMenuSkeleton({
 }: React.ComponentProps<"div"> & {
   showIcon?: boolean;
 }) {
-  // Random width between 50 to 90%.
+  // Random width between 50 to 90%. Intentionally wrapped in useMemo to avoid changing width on every render.
   const width = React.useMemo(() => {
     return `${Math.floor(Math.random() * 40) + 50}%`;
   }, []);

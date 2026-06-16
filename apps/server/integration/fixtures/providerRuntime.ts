@@ -1,18 +1,18 @@
-import { EventId, RuntimeRequestId } from "@t3tools/contracts";
+import { EventId, ProviderDriverKind, RuntimeRequestId } from "@t3tools/contracts";
 import type { LegacyProviderRuntimeEvent } from "../TestProviderAdapter.integration.ts";
 
-const PROVIDER = "codex" as const;
+const PROVIDER = ProviderDriverKind.make("codex");
 const SESSION_ID = "fixture-session";
 const THREAD_ID = "fixture-thread";
 const TURN_ID = "fixture-turn";
-const REQUEST_ID = RuntimeRequestId.makeUnsafe("req-1");
+const REQUEST_ID = RuntimeRequestId.make("req-1");
 
 function baseEvent(
   eventId: string,
   createdAt: string,
 ): Pick<LegacyProviderRuntimeEvent, "eventId" | "provider" | "sessionId" | "createdAt"> {
   return {
-    eventId: EventId.makeUnsafe(eventId),
+    eventId: EventId.make(eventId),
     provider: PROVIDER,
     sessionId: SESSION_ID,
     createdAt,

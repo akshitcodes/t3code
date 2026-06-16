@@ -1,13 +1,13 @@
-import type { ProviderKind } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
-export type ComposerTriggerKind = "path" | "slash-command" | "slash-model";
-export type ComposerSlashCommand = "model" | "plan" | "default" | "review";
+export type ComposerTriggerKind = "path" | "slash-command" | "skill";
+export type ComposerSlashCommand = "model" | "plan" | "default";
 
 export interface ComposerReviewCommand {
-  reviewerProvider: ProviderKind;
+  reviewerProvider: ProviderDriverKind;
   extraContext: string;
 }
 
@@ -18,9 +18,12 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default", "review"];
 const isInlineTokenSegment = (
-  segment: { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" },
+  segment:
+    | { type: "text"; text: string }
+    | { type: "mention" }
+    | { type: "skill" }
+    | { type: "terminal-context" },
 ): boolean => segment.type !== "text";
 
 function clampCursor(text: string, cursor: number): number {
@@ -58,7 +61,16 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
 
   for (const segment of segments) {
     if (segment.type === "mention") {
-      const expandedLength = segment.path.length + 1;
+      const expandedLength = segment.source.length;
+      if (remaining <= 1) {
+        return expandedCursor + (remaining === 0 ? 0 : expandedLength);
+      }
+      remaining -= 1;
+      expandedCursor += expandedLength;
+      continue;
+    }
+    if (segment.type === "skill") {
+      const expandedLength = segment.name.length + 1;
       if (remaining <= 1) {
         return expandedCursor + (remaining === 0 ? 0 : expandedLength);
       }
@@ -87,7 +99,11 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
 }
 
 function collapsedSegmentLength(
-  segment: { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" },
+  segment:
+    | { type: "text"; text: string }
+    | { type: "mention" }
+    | { type: "skill" }
+    | { type: "terminal-context" },
 ): number {
   if (segment.type === "text") {
     return segment.text.length;
@@ -97,7 +113,10 @@ function collapsedSegmentLength(
 
 function clampCollapsedComposerCursorForSegments(
   segments: ReadonlyArray<
-    { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" }
+    | { type: "text"; text: string }
+    | { type: "mention" }
+    | { type: "skill" }
+    | { type: "terminal-context" }
   >,
   cursorInput: number,
 ): number {
@@ -130,7 +149,19 @@ export function collapseExpandedComposerCursor(text: string, cursorInput: number
 
   for (const segment of segments) {
     if (segment.type === "mention") {
-      const expandedLength = segment.path.length + 1;
+      const expandedLength = segment.source.length;
+      if (remaining === 0) {
+        return collapsedCursor;
+      }
+      if (remaining <= expandedLength) {
+        return collapsedCursor + 1;
+      }
+      remaining -= expandedLength;
+      collapsedCursor += 1;
+      continue;
+    }
+    if (segment.type === "skill") {
+      const expandedLength = segment.name.length + 1;
       if (remaining === 0) {
         return collapsedCursor;
       }
@@ -200,30 +231,9 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
     const commandMatch = /^\/(\S*)$/.exec(linePrefix);
     if (commandMatch) {
       const commandQuery = commandMatch[1] ?? "";
-      if (commandQuery.toLowerCase() === "model") {
-        return {
-          kind: "slash-model",
-          query: "",
-          rangeStart: lineStart,
-          rangeEnd: cursor,
-        };
-      }
-      if (SLASH_COMMANDS.some((command) => command.startsWith(commandQuery.toLowerCase()))) {
-        return {
-          kind: "slash-command",
-          query: commandQuery,
-          rangeStart: lineStart,
-          rangeEnd: cursor,
-        };
-      }
-      return null;
-    }
-
-    const modelMatch = /^\/model(?:\s+(.*))?$/.exec(linePrefix);
-    if (modelMatch) {
       return {
-        kind: "slash-model",
-        query: (modelMatch[1] ?? "").trim(),
+        kind: "slash-command",
+        query: commandQuery,
         rangeStart: lineStart,
         rangeEnd: cursor,
       };
@@ -232,6 +242,14 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
+  if (token.startsWith("$")) {
+    return {
+      kind: "skill",
+      query: token.slice(1),
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
+  }
   if (!token.startsWith("@")) {
     return null;
   }
@@ -246,7 +264,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model" | "review"> | null {
+): Exclude<ComposerSlashCommand, "model"> | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
@@ -257,16 +275,16 @@ export function parseStandaloneComposerSlashCommand(
 }
 
 export function parseStandaloneComposerReviewCommand(text: string): ComposerReviewCommand | null {
-  const match = /^\/review\s+--(codex|claude|claudeagent|copilot)(?:\s+([\s\S]*))?$/i.exec(
-    text.trim(),
-  );
+  const match = /^\/review\s+--(codex|claude|claudeagent)(?:\s+([\s\S]*))?$/i.exec(text.trim());
   if (!match?.[1]) {
     return null;
   }
   const provider = match[1].toLowerCase();
   return {
     reviewerProvider:
-      provider === "codex" ? "codex" : provider === "copilot" ? "copilot" : "claudeAgent",
+      provider === "codex"
+        ? ProviderDriverKind.make("codex")
+        : ProviderDriverKind.make("claudeAgent"),
     extraContext: (match[2] ?? "").trim(),
   };
 }

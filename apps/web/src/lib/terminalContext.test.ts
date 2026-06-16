@@ -1,5 +1,5 @@
 import { ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   appendTerminalContextsToPrompt,
@@ -25,7 +25,7 @@ import {
 function makeContext(overrides?: Partial<TerminalContextDraft>): TerminalContextDraft {
   return {
     id: "context-1",
-    threadId: ThreadId.makeUnsafe("thread-1"),
+    threadId: ThreadId.make("thread-1"),
     terminalId: "default",
     terminalLabel: "Terminal 1",
     lineStart: 12,
@@ -122,6 +122,7 @@ describe("terminalContext", () => {
           body: "12 | git status\n13 | On branch main",
         },
       ],
+      elementContexts: [],
     });
   });
 

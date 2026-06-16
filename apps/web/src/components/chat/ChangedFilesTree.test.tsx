@@ -1,6 +1,6 @@
 import { TurnId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { ChangedFilesTree } from "./ChangedFilesTree";
 
@@ -39,7 +39,7 @@ describe("ChangedFilesTree", () => {
     ({ files, visibleLabels, hiddenLabels }) => {
       const markup = renderToStaticMarkup(
         <ChangedFilesTree
-          turnId={TurnId.makeUnsafe("turn-1")}
+          turnId={TurnId.make("turn-1")}
           files={files}
           allDirectoriesExpanded={false}
           resolvedTheme="light"
@@ -100,7 +100,7 @@ describe("ChangedFilesTree", () => {
     ({ files, visibleLabels }) => {
       const markup = renderToStaticMarkup(
         <ChangedFilesTree
-          turnId={TurnId.makeUnsafe("turn-1")}
+          turnId={TurnId.make("turn-1")}
           files={files}
           allDirectoriesExpanded
           resolvedTheme="light"

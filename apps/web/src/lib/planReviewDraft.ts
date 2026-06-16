@@ -1,11 +1,11 @@
-import type { ProviderKind } from "@t3tools/contracts";
+import type { ProviderDriverKind } from "@t3tools/contracts";
 import { buildStructuredPlanReviewPayload } from "@t3tools/shared/review";
 
 import { stripDisplayedPlanMarkdown } from "../proposedPlan";
 import type { ChatMessage, ProposedPlan } from "../types";
 
 export interface PlanReviewDraftState {
-  readonly reviewerProvider: ProviderKind;
+  readonly reviewerProvider: ProviderDriverKind;
   readonly goalText: string;
   readonly goalSourceLabel: string;
   readonly planText: string;
@@ -37,7 +37,7 @@ function normalizePlanText(proposedPlan: ProposedPlan): string {
 }
 
 export function createPlanReviewDraft(input: {
-  readonly reviewerProvider: ProviderKind;
+  readonly reviewerProvider: ProviderDriverKind;
   readonly messages: ReadonlyArray<ChatMessage>;
   readonly proposedPlan: ProposedPlan | null;
   readonly initialExtraContext?: string;

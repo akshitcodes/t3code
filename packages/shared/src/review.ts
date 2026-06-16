@@ -1,4 +1,10 @@
-import { type OrchestrationThreadActivity, type ProviderKind, ThreadId } from "@t3tools/contracts";
+import {
+  isProviderDriverKind,
+  type OrchestrationThreadActivity,
+  PROVIDER_DISPLAY_NAMES,
+  type ProviderDriverKind,
+  ThreadId,
+} from "@t3tools/contracts";
 
 export const PLAN_REVIEW_LINK_ACTIVITY_KIND = "plan-review.linked";
 export const PLAN_REVIEW_REQUESTED_ACTIVITY_KIND = "plan-review.requested";
@@ -9,14 +15,14 @@ export const PLAN_REVIEW_FINISHED_ACTIVITY_KIND = "plan-review.finished";
 export interface LinkedPlanReviewThread {
   readonly role: "source" | "reviewer";
   readonly linkedThreadId: ThreadId;
-  readonly reviewerProvider: ProviderKind;
+  readonly reviewerProvider: ProviderDriverKind;
 }
 
 export interface PendingPlanReviewRequest {
   readonly reviewId: string;
   readonly sourceThreadId: ThreadId;
   readonly reviewerThreadId: ThreadId;
-  readonly reviewerProvider: ProviderKind;
+  readonly reviewerProvider: ProviderDriverKind;
   readonly requestPrompt: string;
   readonly rootRequestPrompt: string;
   readonly round: number;
@@ -27,7 +33,7 @@ export interface ActivePlanReview {
   readonly reviewId: string;
   readonly sourceThreadId: ThreadId;
   readonly reviewerThreadId: ThreadId;
-  readonly reviewerProvider: ProviderKind;
+  readonly reviewerProvider: ProviderDriverKind;
   readonly requestPrompt: string;
   readonly rootRequestPrompt: string;
   readonly round: number;
@@ -84,24 +90,17 @@ function compareActivitiesByOrder(
   return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
 }
 
-function parseProviderKind(value: unknown): ProviderKind | null {
-  return value === "codex" || value === "claudeAgent" || value === "copilot" ? value : null;
+function parseProviderKind(value: unknown): ProviderDriverKind | null {
+  return isProviderDriverKind(value) ? value : null;
 }
 
-export function providerLabel(provider: ProviderKind): "Codex" | "Claude" | "GitHub Copilot" {
-  switch (provider) {
-    case "codex":
-      return "Codex";
-    case "claudeAgent":
-      return "Claude";
-    case "copilot":
-      return "GitHub Copilot";
-  }
+export function providerLabel(provider: ProviderDriverKind): string {
+  return PROVIDER_DISPLAY_NAMES[provider] ?? provider;
 }
 
 export function buildPlanReviewThreadTitle(
   sourceTitle: string,
-  reviewerProvider: ProviderKind,
+  reviewerProvider: ProviderDriverKind,
 ): string {
   return `Review: ${sourceTitle} (${providerLabel(reviewerProvider)})`;
 }
@@ -174,7 +173,7 @@ export function parsePlanReviewDecision(text: string): ParsedPlanReviewDecision 
 }
 
 export function buildPlanReviewFeedbackMessage(input: {
-  readonly reviewerProvider: ProviderKind;
+  readonly reviewerProvider: ProviderDriverKind;
   readonly review: ParsedPlanReviewDecision;
 }): string {
   return [
@@ -192,7 +191,7 @@ export function buildPlanReviewFeedbackMessage(input: {
 export function findLinkedPlanReviewThread(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   role: LinkedPlanReviewThread["role"],
-  reviewerProvider?: ProviderKind,
+  reviewerProvider?: ProviderDriverKind,
 ): LinkedPlanReviewThread | null {
   const ordered = [...activities].toSorted(compareActivitiesByOrder).toReversed();
 
@@ -214,7 +213,7 @@ export function findLinkedPlanReviewThread(
     }
     return {
       role,
-      linkedThreadId: ThreadId.makeUnsafe(linkedThreadId),
+      linkedThreadId: ThreadId.make(linkedThreadId),
       reviewerProvider: parsedReviewerProvider,
     };
   }
@@ -257,8 +256,8 @@ export function findPendingPlanReviewRequest(
 
     return {
       reviewId,
-      sourceThreadId: ThreadId.makeUnsafe(sourceThreadId),
-      reviewerThreadId: ThreadId.makeUnsafe(reviewerThreadId),
+      sourceThreadId: ThreadId.make(sourceThreadId),
+      reviewerThreadId: ThreadId.make(reviewerThreadId),
       reviewerProvider,
       requestPrompt,
       rootRequestPrompt,
@@ -316,8 +315,8 @@ export function findLatestActivePlanReview(
 
     return {
       reviewId,
-      sourceThreadId: ThreadId.makeUnsafe(sourceThreadId),
-      reviewerThreadId: ThreadId.makeUnsafe(reviewerThreadId),
+      sourceThreadId: ThreadId.make(sourceThreadId),
+      reviewerThreadId: ThreadId.make(reviewerThreadId),
       reviewerProvider,
       requestPrompt,
       rootRequestPrompt,

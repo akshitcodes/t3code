@@ -4,14 +4,15 @@
  * Owns durable append/replay access to the orchestration event stream. It does
  * not reduce events into read models or apply command validation rules.
  *
- * Uses Effect `ServiceMap.Service` for dependency injection and exposes typed
+ * Uses Effect `Context.Service` for dependency injection and exposes typed
  * persistence/decode errors for event append and replay operations.
  *
  * @module OrchestrationEventStore
  */
 import { OrchestrationEvent } from "@t3tools/contracts";
-import { ServiceMap } from "effect";
-import type { Effect, Stream } from "effect";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
+import type * as Stream from "effect/Stream";
 
 import type { OrchestrationEventStoreError } from "../Errors.ts";
 
@@ -64,7 +65,7 @@ export interface OrchestrationEventStoreShape {
  * })
  * ```
  */
-export class OrchestrationEventStore extends ServiceMap.Service<
+export class OrchestrationEventStore extends Context.Service<
   OrchestrationEventStore,
   OrchestrationEventStoreShape
 >()("t3/persistence/Services/OrchestrationEventStore") {}

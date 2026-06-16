@@ -1,18 +1,28 @@
-import { ProjectId, type ModelSelection, type ThreadId, type TurnId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  isProviderDriverKind,
+  ProjectId,
+  type ModelSelection,
+  type ProviderDriverKind,
+  type ServerProvider,
+  type ScopedThreadRef,
+  type ThreadId,
+  type TurnId,
+} from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
-import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
-import { Schema } from "effect";
-import { useStore } from "../store";
+import * as Schema from "effect/Schema";
+import { selectThreadByRef, useStore } from "../store";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
 } from "../lib/terminalContext";
+import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
-const WORKTREE_BRANCH_PREFIX = "t3code";
+export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
@@ -24,6 +34,7 @@ export function buildLocalDraftThread(
 ): Thread {
   return {
     id: threadId,
+    environmentId: draftThread.environmentId,
     codexThreadId: null,
     projectId: draftThread.projectId,
     title: "New thread",
@@ -44,21 +55,56 @@ export function buildLocalDraftThread(
   };
 }
 
+export function shouldWriteThreadErrorToCurrentServerThread(input: {
+  serverThread:
+    | {
+        environmentId: EnvironmentId;
+        id: ThreadId;
+      }
+    | null
+    | undefined;
+  routeThreadRef: ScopedThreadRef;
+  targetThreadId: ThreadId;
+}): boolean {
+  return Boolean(
+    input.serverThread &&
+    input.targetThreadId === input.routeThreadRef.threadId &&
+    input.serverThread.environmentId === input.routeThreadRef.environmentId &&
+    input.serverThread.id === input.targetThreadId,
+  );
+}
+
 export function reconcileMountedTerminalThreadIds(input: {
-  currentThreadIds: ReadonlyArray<ThreadId>;
-  openThreadIds: ReadonlyArray<ThreadId>;
-  activeThreadId: ThreadId | null;
+  currentThreadIds: ReadonlyArray<string>;
+  openThreadIds: ReadonlyArray<string>;
+  activeThreadId: string | null;
   activeThreadTerminalOpen: boolean;
   maxHiddenThreadCount?: number;
-}): ThreadId[] {
+}): string[] {
+  return reconcileRetainedMountedThreadIds({
+    currentThreadIds: input.currentThreadIds,
+    openThreadIds: input.openThreadIds,
+    activeThreadId: input.activeThreadId,
+    activeThreadOpen: input.activeThreadTerminalOpen,
+    maxHiddenThreadCount: input.maxHiddenThreadCount ?? MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  });
+}
+
+export function reconcileRetainedMountedThreadIds(input: {
+  currentThreadIds: ReadonlyArray<string>;
+  openThreadIds: ReadonlyArray<string>;
+  activeThreadId: string | null;
+  activeThreadOpen: boolean;
+  maxHiddenThreadCount: number;
+  retainInactiveActiveThread?: boolean;
+}): string[] {
   const openThreadIdSet = new Set(input.openThreadIds);
   const hiddenThreadIds = input.currentThreadIds.filter(
-    (threadId) => threadId !== input.activeThreadId && openThreadIdSet.has(threadId),
+    (threadId) =>
+      (threadId !== input.activeThreadId || input.retainInactiveActiveThread === true) &&
+      openThreadIdSet.has(threadId),
   );
-  const maxHiddenThreadCount = Math.max(
-    0,
-    input.maxHiddenThreadCount ?? MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
-  );
+  const maxHiddenThreadCount = Math.max(0, input.maxHiddenThreadCount);
   const nextThreadIds =
     hiddenThreadIds.length > maxHiddenThreadCount
       ? hiddenThreadIds.slice(-maxHiddenThreadCount)
@@ -66,7 +112,7 @@ export function reconcileMountedTerminalThreadIds(input: {
 
   if (
     input.activeThreadId &&
-    input.activeThreadTerminalOpen &&
+    input.activeThreadOpen &&
     !nextThreadIds.includes(input.activeThreadId)
   ) {
     nextThreadIds.push(input.activeThreadId);
@@ -129,10 +175,11 @@ export function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export function buildTemporaryWorktreeBranchName(): string {
-  // Keep the 8-hex suffix shape for backend temporary-branch detection.
-  const token = randomUUID().slice(0, 8).toLowerCase();
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+export function resolveSendEnvMode(input: {
+  requestedEnvMode: DraftThreadEnvMode;
+  isGitRepo: boolean;
+}): DraftThreadEnvMode {
+  return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
 export function cloneComposerImageForRetry(
@@ -155,6 +202,12 @@ export function deriveComposerSendState(options: {
   prompt: string;
   imageCount: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  /**
+   * Optional element-pick attachment count. Element contexts contribute to
+   * "sendable content" exactly like images and (text-bearing) terminal
+   * contexts do: a prompt of just element chips is still a valid send.
+   */
+  elementContextCount?: number;
 }): {
   trimmedPrompt: string;
   sendableTerminalContexts: TerminalContextDraft[];
@@ -165,12 +218,16 @@ export function deriveComposerSendState(options: {
   const sendableTerminalContexts = filterTerminalContextsWithText(options.terminalContexts);
   const expiredTerminalContextCount =
     options.terminalContexts.length - sendableTerminalContexts.length;
+  const elementContextCount = options.elementContextCount ?? 0;
   return {
     trimmedPrompt,
     sendableTerminalContexts,
     expiredTerminalContextCount,
     hasSendableContent:
-      trimmedPrompt.length > 0 || options.imageCount > 0 || sendableTerminalContexts.length > 0,
+      trimmedPrompt.length > 0 ||
+      options.imageCount > 0 ||
+      sendableTerminalContexts.length > 0 ||
+      elementContextCount > 0,
   };
 }
 
@@ -198,11 +255,84 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   );
 }
 
+// `threadProvider` is the open branded driver kind carried by the session.
+// Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
+// rollback / fork behavior — the routing layer is the right place to surface
+// "driver not installed" errors, not the lock state.
+//
+// `selectedProvider` takes the same open-string shape because the composer
+// now tracks the picker selection as a `ProviderInstanceId` (e.g.
+// `codex_personal`). Custom instance ids that don't directly match a
+// registered driver resolve to `null` here, which matches the existing
+// "unknown driver -> unlocked" semantics. Callers that want the lock to track
+// a custom instance's underlying driver kind should resolve the instance id
+// upstream and pass the correlated kind.
+export function deriveLockedProvider(input: {
+  thread: Thread | null | undefined;
+  selectedProvider: string | null;
+  threadProvider: string | null;
+}): ProviderDriverKind | null {
+  if (!threadHasStarted(input.thread)) {
+    return null;
+  }
+  const sessionProvider = input.thread?.session?.provider ?? null;
+  if (sessionProvider) {
+    return sessionProvider;
+  }
+  const narrowedThreadProvider =
+    input.threadProvider && isProviderDriverKind(input.threadProvider)
+      ? input.threadProvider
+      : null;
+  const narrowedSelectedProvider =
+    input.selectedProvider && isProviderDriverKind(input.selectedProvider)
+      ? input.selectedProvider
+      : null;
+  return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
+}
+
+export function getStartedThreadModelChangeBlockReason(input: {
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
+  hasStartedSession: boolean;
+  currentModelSelection: ModelSelection;
+  currentProviderInstanceId?: ModelSelection["instanceId"] | null | undefined;
+  nextModelSelection: ModelSelection;
+}): { title: string; description: string } | null {
+  if (!input.hasStartedSession) {
+    return null;
+  }
+  const currentModelSelection = {
+    ...input.currentModelSelection,
+    instanceId: input.currentProviderInstanceId ?? input.currentModelSelection.instanceId,
+  };
+  if (
+    currentModelSelection.instanceId === input.nextModelSelection.instanceId &&
+    currentModelSelection.model === input.nextModelSelection.model
+  ) {
+    return null;
+  }
+  const currentProvider = input.providers.find(
+    (snapshot) => snapshot.instanceId === currentModelSelection.instanceId,
+  );
+  const nextProvider = input.providers.find(
+    (snapshot) => snapshot.instanceId === input.nextModelSelection.instanceId,
+  );
+  if (
+    currentProvider?.requiresNewThreadForModelChange !== true &&
+    nextProvider?.requiresNewThreadForModelChange !== true
+  ) {
+    return null;
+  }
+  return {
+    title: "Start a new chat to change models",
+    description: "This provider does not allow switching models after a conversation has started.",
+  };
+}
+
 export async function waitForStartedServerThread(
-  threadId: ThreadId,
+  threadRef: ScopedThreadRef,
   timeoutMs = 1_000,
 ): Promise<boolean> {
-  const getThread = () => useStore.getState().threads.find((thread) => thread.id === threadId);
+  const getThread = () => selectThreadByRef(useStore.getState(), threadRef);
   const thread = getThread();
 
   if (threadHasStarted(thread)) {
@@ -225,7 +355,7 @@ export async function waitForStartedServerThread(
     };
 
     const unsubscribe = useStore.subscribe((state) => {
-      if (!threadHasStarted(state.threads.find((thread) => thread.id === threadId))) {
+      if (!threadHasStarted(selectThreadByRef(state, threadRef))) {
         return;
       }
       finish(true);
@@ -283,23 +413,37 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   if (!input.localDispatch) {
     return false;
   }
-  if (
-    input.phase === "running" ||
-    input.hasPendingApproval ||
-    input.hasPendingUserInput ||
-    Boolean(input.threadError)
-  ) {
+  if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
     return true;
   }
 
   const latestTurn = input.latestTurn ?? null;
   const session = input.session ?? null;
-
-  return (
+  const latestTurnChanged =
     input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
     input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||
     input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
-    input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null) ||
+    input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
+
+  if (input.phase === "running") {
+    if (!latestTurnChanged) {
+      return false;
+    }
+    if (latestTurn?.startedAt === null || latestTurn === null) {
+      return false;
+    }
+    if (
+      session?.activeTurnId !== undefined &&
+      session.activeTurnId !== null &&
+      latestTurn?.turnId !== session.activeTurnId
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  return (
+    latestTurnChanged ||
     input.localDispatch.sessionOrchestrationStatus !== (session?.orchestrationStatus ?? null) ||
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );

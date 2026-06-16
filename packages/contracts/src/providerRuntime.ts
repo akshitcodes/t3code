@@ -1,4 +1,5 @@
-import { Option, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
   EventId,
   IsoDateTime,
@@ -11,21 +12,22 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
-} from "./baseSchemas";
-import { ProviderKind } from "./orchestration";
+} from "./baseSchemas.ts";
+import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
 
-const RuntimeEventRawSource = Schema.Literals([
-  "codex.app-server.notification",
-  "codex.app-server.request",
-  "codex.eventmsg",
-  "claude.sdk.message",
-  "claude.sdk.permission",
-  "codex.sdk.thread-event",
-  "copilot.sdk.event",
-  "copilot.sdk.permission",
+const RuntimeEventRawSource = Schema.Union([
+  Schema.Literal("codex.app-server.notification"),
+  Schema.Literal("codex.app-server.request"),
+  Schema.Literal("codex.eventmsg"),
+  Schema.Literal("claude.sdk.message"),
+  Schema.Literal("claude.sdk.permission"),
+  Schema.Literal("codex.sdk.thread-event"),
+  Schema.Literal("opencode.sdk.event"),
+  Schema.Literal("acp.jsonrpc"),
+  Schema.TemplateLiteral(["acp.", Schema.String, ".extension"]),
 ]);
 export type RuntimeEventRawSource = typeof RuntimeEventRawSource.Type;
 
@@ -239,12 +241,17 @@ const ModelReroutedType = Schema.Literal("model.rerouted");
 const ConfigWarningType = Schema.Literal("config.warning");
 const DeprecationNoticeType = Schema.Literal("deprecation.notice");
 const FilesPersistedType = Schema.Literal("files.persisted");
+const ToolDeniedType = Schema.Literal("tool.denied");
 const RuntimeWarningType = Schema.Literal("runtime.warning");
 const RuntimeErrorType = Schema.Literal("runtime.error");
 
 const ProviderRuntimeEventBase = Schema.Struct({
   eventId: EventId,
-  provider: ProviderKind,
+  provider: ProviderDriverKind,
+  // Optional during the driver/instance migration. See providerInstance.ts
+  // for the routing-key-vs-driver-id distinction. Once every emitter
+  // populates it (post-slice-4), routing flips to instance-id-only.
+  providerInstanceId: Schema.optional(ProviderInstanceId),
   threadId: ThreadId,
   createdAt: IsoDateTime,
   turnId: Schema.optional(TurnId),
@@ -437,7 +444,7 @@ export const UserInputQuestion = Schema.Struct({
   question: TrimmedNonEmptyStringSchema,
   options: Schema.Array(UserInputQuestionOption),
   multiSelect: Schema.optional(Schema.Boolean).pipe(
-    Schema.withConstructorDefault(() => Option.some(false)),
+    Schema.withConstructorDefault(Effect.succeed(false)),
   ),
 });
 export type UserInputQuestion = typeof UserInputQuestion.Type;
@@ -582,6 +589,14 @@ const FilesPersistedPayload = Schema.Struct({
   ),
 });
 export type FilesPersistedPayload = typeof FilesPersistedPayload.Type;
+
+const ToolDeniedPayload = Schema.Struct({
+  toolName: TrimmedNonEmptyStringSchema,
+  toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+  reason: Schema.optional(TrimmedNonEmptyStringSchema),
+  agentId: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type ToolDeniedPayload = typeof ToolDeniedPayload.Type;
 
 const RuntimeWarningPayload = Schema.Struct({
   message: TrimmedNonEmptyStringSchema,
@@ -928,6 +943,13 @@ const ProviderRuntimeFilesPersistedEvent = Schema.Struct({
 });
 export type ProviderRuntimeFilesPersistedEvent = typeof ProviderRuntimeFilesPersistedEvent.Type;
 
+const ProviderRuntimeToolDeniedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ToolDeniedType,
+  payload: ToolDeniedPayload,
+});
+export type ProviderRuntimeToolDeniedEvent = typeof ProviderRuntimeToolDeniedEvent.Type;
+
 const ProviderRuntimeWarningEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: RuntimeWarningType,
@@ -988,6 +1010,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeConfigWarningEvent,
   ProviderRuntimeDeprecationNoticeEvent,
   ProviderRuntimeFilesPersistedEvent,
+  ProviderRuntimeToolDeniedEvent,
   ProviderRuntimeWarningEvent,
   ProviderRuntimeErrorEvent,
 ]);

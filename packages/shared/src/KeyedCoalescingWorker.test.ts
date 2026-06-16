@@ -1,8 +1,9 @@
 import { it } from "@effect/vitest";
-import { describe, expect } from "vitest";
-import { Deferred, Effect } from "effect";
+import { describe, expect } from "vite-plus/test";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
 
-import { makeKeyedCoalescingWorker } from "./KeyedCoalescingWorker";
+import { makeKeyedCoalescingWorker } from "./KeyedCoalescingWorker.ts";
 
 describe("makeKeyedCoalescingWorker", () => {
   it.live("waits for latest work enqueued during active processing before draining the key", () =>
@@ -73,7 +74,7 @@ describe("makeKeyedCoalescingWorker", () => {
               if (value === "first") {
                 yield* Deferred.succeed(firstStarted, undefined).pipe(Effect.orDie);
                 yield* Deferred.await(releaseFailure);
-                yield* Effect.fail("boom");
+                return yield* Effect.fail("boom");
               }
 
               if (value === "second") {

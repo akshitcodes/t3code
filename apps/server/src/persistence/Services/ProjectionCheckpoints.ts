@@ -16,8 +16,10 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { Option, ServiceMap, Schema } from "effect";
-import type { Effect } from "effect";
+import * as Option from "effect/Option";
+import * as Context from "effect/Context";
+import * as Schema from "effect/Schema";
+import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../Errors.ts";
 
@@ -87,7 +89,7 @@ export interface ProjectionCheckpointRepositoryShape {
 /**
  * ProjectionCheckpointRepository - Service tag for checkpoint projection persistence.
  */
-export class ProjectionCheckpointRepository extends ServiceMap.Service<
+export class ProjectionCheckpointRepository extends Context.Service<
   ProjectionCheckpointRepository,
   ProjectionCheckpointRepositoryShape
 >()("t3/persistence/Services/ProjectionCheckpoints/ProjectionCheckpointRepository") {}

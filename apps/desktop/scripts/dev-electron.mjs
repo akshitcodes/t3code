@@ -1,33 +1,56 @@
 import { spawn, spawnSync } from "node:child_process";
 import { watch } from "node:fs";
+import * as NodeOS from "node:os";
 import { join } from "node:path";
 
-import { desktopDir, resolveElectronPath } from "./electron-launcher.mjs";
+import {
+  desktopDir,
+  resolveDevProtocolClient,
+  resolveElectronLaunchCommand,
+} from "./electron-launcher.mjs";
 import { waitForResources } from "./wait-for-resources.mjs";
 
-const port = Number(process.env.ELECTRON_RENDERER_PORT ?? 5733);
-const devServerUrl = `http://localhost:${port}`;
+const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
+if (!devServerUrl) {
+  throw new Error("VITE_DEV_SERVER_URL is required for desktop development.");
+}
+
+const devServer = new URL(devServerUrl);
+const port = Number.parseInt(devServer.port, 10);
+if (!Number.isInteger(port) || port <= 0) {
+  throw new Error(`VITE_DEV_SERVER_URL must include an explicit port: ${devServerUrl}`);
+}
+
 const requiredFiles = [
-  "dist-electron/main.js",
-  "dist-electron/preload.js",
+  "dist-electron/main.cjs",
+  "dist-electron/preload.cjs",
   "../server/dist/bin.mjs",
 ];
 const watchedDirectories = [
-  { directory: "dist-electron", files: new Set(["main.js", "preload.js"]) },
+  { directory: "dist-electron", files: new Set(["main.cjs", "preload.cjs"]) },
   { directory: "../server/dist", files: new Set(["bin.mjs"]) },
 ];
 const forcedShutdownTimeoutMs = 1_500;
 const restartDebounceMs = 120;
 const childTreeGracePeriodMs = 1_200;
+const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.trim();
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone dev script has no Effect runtime.
+const hostPlatform = NodeOS.platform();
 
 await waitForResources({
   baseDir: desktopDir,
   files: requiredFiles,
+  tcpHost: devServer.hostname,
   tcpPort: port,
 });
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
+const devProtocolClient = resolveDevProtocolClient();
+if (devProtocolClient) {
+  childEnv.T3CODE_DESKTOP_APP_USER_MODEL_ID = devProtocolClient.appBundleId;
+  childEnv.T3CODE_DESKTOP_PROTOCOL_REGISTRATION_MANAGED = "1";
+}
 
 let shuttingDown = false;
 let restartTimer = null;
@@ -37,7 +60,7 @@ const expectedExits = new WeakSet();
 const watchers = [];
 
 function killChildTreeByPid(pid, signal) {
-  if (process.platform === "win32" || typeof pid !== "number") {
+  if (hostPlatform === "win32" || typeof pid !== "number") {
     return;
   }
 
@@ -45,7 +68,7 @@ function killChildTreeByPid(pid, signal) {
 }
 
 function cleanupStaleDevApps() {
-  if (process.platform === "win32") {
+  if (hostPlatform === "win32") {
     return;
   }
 
@@ -57,18 +80,18 @@ function startApp() {
     return;
   }
 
-  const app = spawn(
-    resolveElectronPath(),
-    [`--t3code-dev-root=${desktopDir}`, "dist-electron/main.js"],
-    {
-      cwd: desktopDir,
-      env: {
-        ...childEnv,
-        VITE_DEV_SERVER_URL: devServerUrl,
-      },
-      stdio: "inherit",
-    },
-  );
+  const electronArgs = remoteDebuggingPort
+    ? [`--remote-debugging-port=${remoteDebuggingPort}`]
+    : [];
+  const launchArgs = devProtocolClient
+    ? electronArgs
+    : [...electronArgs, `--t3code-dev-root=${desktopDir}`, "dist-electron/main.cjs"];
+  const electronCommand = resolveElectronLaunchCommand(launchArgs);
+  const app = spawn(electronCommand.electronPath, electronCommand.args, {
+    cwd: desktopDir,
+    env: childEnv,
+    stdio: "inherit",
+  });
 
   currentApp = app;
 
@@ -118,6 +141,7 @@ async function stopApp() {
     app.once("exit", finish);
     app.kill("SIGTERM");
     killChildTreeByPid(app.pid, "TERM");
+    cleanupStaleDevApps();
 
     setTimeout(() => {
       if (settled) {
@@ -126,6 +150,7 @@ async function stopApp() {
 
       app.kill("SIGKILL");
       killChildTreeByPid(app.pid, "KILL");
+      cleanupStaleDevApps();
       finish();
     }, forcedShutdownTimeoutMs).unref();
   });
@@ -172,7 +197,7 @@ function startWatchers() {
 }
 
 function killChildTree(signal) {
-  if (process.platform === "win32") {
+  if (hostPlatform === "win32") {
     return;
   }
 

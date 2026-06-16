@@ -1,6 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import { WorkspacePaths } from "../Services/WorkspacePaths.ts";
 import { WorkspacePathsLive } from "./WorkspacePaths.ts";
@@ -55,6 +58,24 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
           .pipe(Effect.flip);
 
         expect(error.message).toContain("Workspace root does not exist:");
+      }),
+    );
+
+    it.effect("creates missing directories when createIfMissing is enabled", () =>
+      Effect.gen(function* () {
+        const workspacePaths = yield* WorkspacePaths;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir();
+        const path = yield* Path.Path;
+        const missingPath = path.join(cwd, "nested", "new-project");
+
+        const resolved = yield* workspacePaths.normalizeWorkspaceRoot(missingPath, {
+          createIfMissing: true,
+        });
+        const stat = yield* fileSystem.stat(resolved);
+
+        expect(resolved).toBe(missingPath);
+        expect(stat.type).toBe("Directory");
       }),
     );
 

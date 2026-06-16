@@ -6,8 +6,9 @@
  *
  * @module OrchestrationReactor
  */
-import { ServiceMap } from "effect";
-import type { Effect, Scope } from "effect";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
+import type * as Scope from "effect/Scope";
 
 /**
  * OrchestrationReactorShape - Service API for orchestration reactor lifecycle.
@@ -25,7 +26,7 @@ export interface OrchestrationReactorShape {
 /**
  * OrchestrationReactor - Service tag for orchestration reactor coordination.
  */
-export class OrchestrationReactor extends ServiceMap.Service<
+export class OrchestrationReactor extends Context.Service<
   OrchestrationReactor,
   OrchestrationReactorShape
 >()("t3/orchestration/Services/OrchestrationReactor") {}

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,19 +13,37 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import {
   ApprovalRequestId,
+  ClaudeSettings,
+  ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
+  type RuntimeMode,
   ThreadId,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Fiber, Layer, Random, Stream } from "effect";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Random from "effect/Random";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
-import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
-import { makeClaudeAdapterLive, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+
+// Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
+class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()(
+  "t3/provider/Layers/ClaudeAdapter.test/ClaudeAdapter",
+) {}
 
 class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   private readonly queue: Array<SDKMessage> = [];
@@ -135,6 +154,8 @@ function makeHarness(config?: {
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
   readonly cwd?: string;
   readonly baseDir?: string;
+  readonly claudeConfig?: Partial<ClaudeSettings>;
+  readonly instanceId?: ProviderInstanceId;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -145,6 +166,7 @@ function makeHarness(config?: {
     | undefined;
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
+    ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -162,7 +184,13 @@ function makeHarness(config?: {
   };
 
   return {
-    layer: makeClaudeAdapterLive(adapterOptions).pipe(
+    layer: Layer.effect(
+      ClaudeAdapter,
+      Effect.gen(function* () {
+        const claudeConfig = decodeClaudeSettings(config?.claudeConfig ?? {});
+        return yield* makeClaudeAdapter(claudeConfig, adapterOptions);
+      }),
+    ).pipe(
       Layer.provideMerge(
         ServerConfig.layerTest(
           config?.cwd ?? "/tmp/claude-adapter-test",
@@ -236,8 +264,8 @@ async function readFirstPromptMessage(
   return next.value;
 }
 
-const THREAD_ID = ThreadId.makeUnsafe("thread-claude-1");
-const RESUME_THREAD_ID = ThreadId.makeUnsafe("thread-claude-resume");
+const THREAD_ID = ThreadId.make("thread-claude-1");
+const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
   it.effect("returns validation error for non-claude provider on startSession", () => {
@@ -245,7 +273,11 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       const result = yield* adapter
-        .startSession({ threadId: THREAD_ID, provider: "codex", runtimeMode: "full-access" })
+        .startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("codex"),
+          runtimeMode: "full-access",
+        })
         .pipe(Effect.result);
 
       assert.equal(result._tag, "Failure");
@@ -255,7 +287,7 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(
         result.failure,
         new ProviderAdapterValidationError({
-          provider: "claudeAgent",
+          provider: ProviderDriverKind.make("claudeAgent"),
           operation: "startSession",
           issue: "Expected provider 'claudeAgent' but received 'codex'.",
         }),
@@ -272,7 +304,7 @@ describe("ClaudeAdapterLive", () => {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -292,7 +324,7 @@ describe("ClaudeAdapterLive", () => {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "approval-required",
       });
 
@@ -312,7 +344,7 @@ describe("ClaudeAdapterLive", () => {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -331,13 +363,55 @@ describe("ClaudeAdapterLive", () => {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+          [{ id: "effort", value: "max" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.effort, "max");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("runs Claude SDK sessions with the configured Claude HOME", () => {
+    const harness = makeHarness({ claudeConfig: { homePath: "~/.claude-work" } });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.env?.HOME, path.join(os.homedir(), ".claude-work"));
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("maps the Claude Opus 4.7 default effort to the SDK-supported max value", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
         modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-opus-4-6",
-          options: {
-            effort: "max",
-          },
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-4-7",
         },
         runtimeMode: "full-access",
       });
@@ -350,20 +424,64 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("maps xhigh effort for Claude Opus 4.7 to the SDK-supported max value", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-7",
+          [{ id: "effort", value: "xhigh" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.effort, "max");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("preserves xhigh effort for Claude Fable 5", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-fable-5",
+          [{ id: "effort", value: "xhigh" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.effort, "xhigh");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("falls back to default effort when unsupported max is requested for Sonnet 4.6", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
-          options: {
-            effort: "max",
-          },
-        },
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-sonnet-4-6",
+          [{ id: "effort", value: "max" }],
+        ),
         runtimeMode: "full-access",
       });
 
@@ -381,14 +499,12 @@ describe("ClaudeAdapterLive", () => {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-haiku-4-5",
-          options: {
-            effort: "high",
-          },
-        },
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-haiku-4-5",
+          [{ id: "effort", value: "high" }],
+        ),
         runtimeMode: "full-access",
       });
 
@@ -406,14 +522,12 @@ describe("ClaudeAdapterLive", () => {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-haiku-4-5",
-          options: {
-            thinking: false,
-          },
-        },
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-haiku-4-5",
+          [{ id: "thinking", value: false }],
+        ),
         runtimeMode: "full-access",
       });
 
@@ -433,14 +547,12 @@ describe("ClaudeAdapterLive", () => {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
-          options: {
-            thinking: false,
-          },
-        },
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-sonnet-4-6",
+          [{ id: "thinking", value: false }],
+        ),
         runtimeMode: "full-access",
       });
 
@@ -458,14 +570,12 @@ describe("ClaudeAdapterLive", () => {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-opus-4-6",
-          options: {
-            fastMode: true,
-          },
-        },
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+          [{ id: "fastMode", value: true }],
+        ),
         runtimeMode: "full-access",
       });
 
@@ -485,14 +595,12 @@ describe("ClaudeAdapterLive", () => {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
-          options: {
-            fastMode: true,
-          },
-        },
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-sonnet-4-6",
+          [{ id: "fastMode", value: true }],
+        ),
         runtimeMode: "full-access",
       });
 
@@ -510,14 +618,12 @@ describe("ClaudeAdapterLive", () => {
       const adapter = yield* ClaudeAdapter;
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
-          options: {
-            effort: "ultrathink",
-          },
-        },
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-sonnet-4-6",
+          [{ id: "effort", value: "ultrathink" }],
+        ),
         runtimeMode: "full-access",
       });
 
@@ -525,13 +631,11 @@ describe("ClaudeAdapterLive", () => {
         threadId: session.threadId,
         input: "Investigate the edge cases",
         attachments: [],
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
-          options: {
-            effort: "ultrathink",
-          },
-        },
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-sonnet-4-6",
+          [{ id: "effort", value: "ultrathink" }],
+        ),
       });
 
       const createInput = harness.getLastCreateQueryInput();
@@ -576,7 +680,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -621,9 +725,9 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         modelSelection: {
-          provider: "claudeAgent",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-sonnet-4-5",
         },
         runtimeMode: "full-access",
@@ -786,6 +890,73 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "run 5 commands",
+        attachments: [],
+      });
+
+      // Steer: a second sendTurn while the turn is still running continues
+      // the same turn — the message is queued into the live agent loop.
+      const steeredTurn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "actually run 15",
+        attachments: [],
+      });
+      assert.equal(String(steeredTurn.turnId), String(turn.turnId));
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-steer",
+        uuid: "assistant-steer-1",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-steer-1",
+          content: [{ type: "text", text: "Adjusting to 15." }],
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-steer",
+        uuid: "result-steer-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+
+      // One turn boundary for the whole run: the steer produced no
+      // turn.completed/turn.started pair.
+      assert.equal(turnStartedEvents.length, 1);
+      assert.equal(String(turnStartedEvents[0]?.turnId), String(turn.turnId));
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(String(turnCompletedEvents[0]?.turnId), String(turn.turnId));
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("maps Claude reasoning deltas, streamed tool inputs, and tool results", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -798,7 +969,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -965,6 +1136,97 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("falls back to a default plan step label for blank TodoWrite content", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 10).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-todo-plan",
+        uuid: "stream-todo-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "tool_use",
+            id: "tool-todo-1",
+            name: "TodoWrite",
+            input: {},
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-todo-plan",
+        uuid: "stream-todo-input",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 1,
+          delta: {
+            type: "input_json_delta",
+            partial_json:
+              '{"todos":[{"content":"   ","status":"in_progress"},{"content":"Ship it","status":"completed"}]}',
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-todo-plan",
+        uuid: "stream-todo-stop",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_stop",
+          index: 1,
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-todo-plan",
+        uuid: "result-todo-plan",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const planUpdated = runtimeEvents.find((event) => event.type === "turn.plan.updated");
+      assert.equal(planUpdated?.type, "turn.plan.updated");
+      if (planUpdated?.type === "turn.plan.updated") {
+        assert.equal(String(planUpdated.turnId), String(turn.turnId));
+        assert.deepEqual(planUpdated.payload.plan, [
+          { step: "Task", status: "inProgress" },
+          { step: "Ship it", status: "completed" },
+        ]);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("classifies Claude Task tool invocations as collaboration agent work", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -977,7 +1239,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -1053,7 +1315,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -1103,8 +1365,8 @@ describe("ClaudeAdapterLive", () => {
   it.effect("closes the session when the Claude stream aborts after a turn starts", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
-      const services = yield* Effect.services();
-      const runFork = Effect.runForkWith(services);
+      const context = yield* Effect.context<never>();
+      const runFork = Effect.runForkWith(context);
 
       const adapter = yield* ClaudeAdapter;
       const runtimeEvents: Array<ProviderRuntimeEvent> = [];
@@ -1119,7 +1381,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -1168,6 +1430,77 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("closes the previous session before replacing an existing thread session", () => {
+    const queries: FakeClaudeQuery[] = [];
+    const layer = Layer.effect(
+      ClaudeAdapter,
+      Effect.gen(function* () {
+        const claudeConfig = decodeClaudeSettings({});
+        return yield* makeClaudeAdapter(claudeConfig, {
+          createQuery: () => {
+            const query = new FakeClaudeQuery();
+            queries.push(query);
+            return query;
+          },
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const firstSession = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const secondSession = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        resumeCursor: firstSession.resumeCursor,
+      });
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const activeSessions = yield* adapter.listSessions();
+
+      assert.equal(queries.length, 2);
+      assert.equal(queries[0]?.closeCalls, 1);
+      assert.equal(queries[1]?.closeCalls, 0);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+      assert.equal(activeSessions.length, 1);
+      assert.deepEqual(activeSessions[0]?.resumeCursor, secondSession.resumeCursor);
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+        ],
+      );
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "session.exited"),
+        false,
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
   it.effect("stopSession does not throw into the SDK prompt consumer", () => {
     // The SDK consumes user messages via `for await (... of prompt)`.
     // Stopping a session must end that loop cleanly — not throw an error.
@@ -1182,29 +1515,35 @@ describe("ClaudeAdapterLive", () => {
 
     let promptConsumerError: unknown = undefined;
 
-    const layer = makeClaudeAdapterLive({
-      createQuery: (input) => {
-        // Simulate the SDK consuming the prompt iterable
-        (async () => {
-          try {
-            for await (const _message of input.prompt) {
-              /* SDK processes user messages */
-            }
-          } catch (error) {
-            promptConsumerError = error;
-          }
-        })();
-        return query;
-      },
-    }).pipe(
+    const layer = Layer.effect(
+      ClaudeAdapter,
+      Effect.gen(function* () {
+        const claudeConfig = decodeClaudeSettings({});
+        return yield* makeClaudeAdapter(claudeConfig, {
+          createQuery: (input) => {
+            // Simulate the SDK consuming the prompt iterable
+            (async () => {
+              try {
+                for await (const _message of input.prompt) {
+                  /* SDK processes user messages */
+                }
+              } catch (error) {
+                promptConsumerError = error;
+              }
+            })();
+            return query;
+          },
+        });
+      }),
+    ).pipe(
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(NodeServices.layer),
     );
 
     return Effect.gen(function* () {
-      const services = yield* Effect.services();
-      const runFork = Effect.runForkWith(services);
+      const context = yield* Effect.context<never>();
+      const runFork = Effect.runForkWith(context);
 
       const adapter = yield* ClaudeAdapter;
 
@@ -1214,7 +1553,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -1223,7 +1562,8 @@ describe("ClaudeAdapterLive", () => {
       yield* Effect.yieldNow;
       yield* Effect.yieldNow;
       yield* Effect.yieldNow;
-      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
+      yield* TestClock.adjust("50 millis");
+      yield* Effect.yieldNow;
 
       runtimeEventsFiber.interruptUnsafe();
 
@@ -1251,7 +1591,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -1298,7 +1638,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -1352,7 +1692,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -1407,6 +1747,150 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("clamps oversized Claude usage to the reported context window", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        duration_ms: 1234,
+        duration_api_ms: 1200,
+        num_turns: 1,
+        result: "done",
+        stop_reason: "end_turn",
+        session_id: "sdk-session-result-usage-clamped",
+        usage: {
+          total_tokens: 535000,
+        },
+        modelUsage: {
+          "claude-opus-4-6": {
+            contextWindow: 200000,
+            maxOutputTokens: 64000,
+          },
+        },
+      } as unknown as SDKMessage);
+      harness.query.finish();
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const usageEvent = runtimeEvents.find((event) => event.type === "thread.token-usage.updated");
+      assert.equal(usageEvent?.type, "thread.token-usage.updated");
+      if (usageEvent?.type === "thread.token-usage.updated") {
+        assert.deepEqual(usageEvent.payload, {
+          usage: {
+            usedTokens: 200000,
+            lastUsedTokens: 200000,
+            totalProcessedTokens: 535000,
+            maxTokens: 200000,
+          },
+        });
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect(
+    "preserves oversized Claude result totals after task progress snapshots are recorded",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
+        });
+
+        harness.query.emit({
+          type: "system",
+          subtype: "task_progress",
+          task_id: "task-usage-clamped",
+          description: "Thinking through the patch",
+          usage: {
+            total_tokens: 190000,
+          },
+          session_id: "sdk-session-task-usage-clamped",
+          uuid: "task-usage-progress-clamped",
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          duration_ms: 1234,
+          duration_api_ms: 1200,
+          num_turns: 1,
+          result: "done",
+          stop_reason: "end_turn",
+          session_id: "sdk-session-result-usage-clamped-after-progress",
+          usage: {
+            total_tokens: 535000,
+          },
+          modelUsage: {
+            "claude-opus-4-6": {
+              contextWindow: 200000,
+              maxOutputTokens: 64000,
+            },
+          },
+        } as unknown as SDKMessage);
+        harness.query.finish();
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const usageEvents = runtimeEvents.filter(
+          (event) => event.type === "thread.token-usage.updated",
+        );
+        const finalUsageEvent = usageEvents.at(-1);
+        assert.equal(finalUsageEvent?.type, "thread.token-usage.updated");
+        if (finalUsageEvent?.type === "thread.token-usage.updated") {
+          assert.deepEqual(finalUsageEvent.payload, {
+            usage: {
+              usedTokens: 190000,
+              lastUsedTokens: 190000,
+              totalProcessedTokens: 535000,
+              maxTokens: 200000,
+            },
+          });
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect(
     "emits completion only after turn result when assistant frames arrive before deltas",
     () => {
@@ -1421,7 +1905,7 @@ describe("ClaudeAdapterLive", () => {
 
         const session = yield* adapter.startSession({
           threadId: THREAD_ID,
-          provider: "claudeAgent",
+          provider: ProviderDriverKind.make("claudeAgent"),
           runtimeMode: "full-access",
         });
 
@@ -1512,7 +1996,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -1678,7 +2162,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -1747,7 +2231,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -1969,7 +2453,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
       assert.equal(session.threadId, THREAD_ID);
@@ -2042,7 +2526,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "approval-required",
       });
 
@@ -2107,7 +2591,7 @@ describe("ClaudeAdapterLive", () => {
         return;
       }
       assert.deepEqual(requested.value.providerRefs, {
-        providerItemId: ProviderItemId.makeUnsafe("tool-use-1"),
+        providerItemId: ProviderItemId.make("tool-use-1"),
       });
       const runtimeRequestId = requested.value.requestId;
       assert.equal(typeof runtimeRequestId, "string");
@@ -2117,7 +2601,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.respondToRequest(
         session.threadId,
-        ApprovalRequestId.makeUnsafe(runtimeRequestId),
+        ApprovalRequestId.make(runtimeRequestId),
         "accept",
       );
 
@@ -2133,7 +2617,7 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(resolved.value.requestId, requested.value.requestId);
       assert.equal(resolved.value.payload.decision, "accept");
       assert.deepEqual(resolved.value.providerRefs, {
-        providerItemId: ProviderItemId.makeUnsafe("tool-use-1"),
+        providerItemId: ProviderItemId.make("tool-use-1"),
       });
 
       const permissionResult = yield* Effect.promise(() => permissionPromise);
@@ -2151,7 +2635,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "approval-required",
       });
 
@@ -2182,7 +2666,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.respondToRequest(
         session.threadId,
-        ApprovalRequestId.makeUnsafe(String(agentRequested.value.requestId)),
+        ApprovalRequestId.make(String(agentRequested.value.requestId)),
         "accept",
       );
       yield* Stream.runHead(adapter.streamEvents);
@@ -2206,7 +2690,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.respondToRequest(
         session.threadId,
-        ApprovalRequestId.makeUnsafe(String(grepRequested.value.requestId)),
+        ApprovalRequestId.make(String(grepRequested.value.requestId)),
         "accept",
       );
       yield* Stream.runHead(adapter.streamEvents);
@@ -2224,7 +2708,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: RESUME_THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         resumeCursor: {
           threadId: "resume-thread-1",
           resume: "550e8400-e29b-41d4-a716-446655440000",
@@ -2252,6 +2736,96 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("preserves durable resume ids across Claude resume hooks", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const durableSessionId = "550e8400-e29b-41d4-a716-446655440000";
+      const transientHookSessionId = "7368d0c7-40a3-4d8a-bcc1-ac80c49f2719";
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: {
+          threadId: RESUME_THREAD_ID,
+          resume: durableSessionId,
+          resumeSessionAt: "assistant-99",
+          turnCount: 3,
+        },
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "hook_started",
+        hook_id: "resume-hook-1",
+        hook_name: "SessionStart:resume",
+        hook_event: "SessionStart",
+        session_id: transientHookSessionId,
+        uuid: "resume-hook-started",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "hook_response",
+        hook_id: "resume-hook-1",
+        hook_name: "SessionStart:resume",
+        hook_event: "SessionStart",
+        output: "",
+        stdout: "",
+        stderr: "",
+        outcome: "success",
+        session_id: transientHookSessionId,
+        uuid: "resume-hook-response",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "init",
+        apiKeySource: "none",
+        claude_code_version: "test",
+        cwd: "/tmp/claude-adapter-test",
+        tools: [],
+        mcp_servers: [],
+        model: "claude-sonnet-4-5",
+        permissionMode: "bypassPermissions",
+        slash_commands: [],
+        output_style: "default",
+        skills: [],
+        plugins: [],
+        session_id: durableSessionId,
+        uuid: "resume-init",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const threadStartedEvents = runtimeEvents.filter((event) => event.type === "thread.started");
+      assert.equal(threadStartedEvents.length, 1);
+      const threadStarted = threadStartedEvents[0];
+      assert.equal(threadStarted?.type, "thread.started");
+      if (threadStarted?.type === "thread.started") {
+        assert.deepEqual(threadStarted.payload, {
+          providerThreadId: durableSessionId,
+        });
+      }
+
+      const activeSessions = yield* adapter.listSessions();
+      const resumeCursor = activeSessions[0]?.resumeCursor as
+        | {
+            readonly resume?: string;
+          }
+        | undefined;
+      assert.equal(resumeCursor?.resume, durableSessionId);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("uses an app-generated Claude session id for fresh sessions", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -2259,7 +2833,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -2293,7 +2867,7 @@ describe("ClaudeAdapterLive", () => {
 
         const session = yield* adapter.startSession({
           threadId: THREAD_ID,
-          provider: "claudeAgent",
+          provider: ProviderDriverKind.make("claudeAgent"),
           runtimeMode: "full-access",
         });
 
@@ -2373,20 +2947,48 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
       yield* adapter.sendTurn({
         threadId: session.threadId,
         input: "hello",
         modelSelection: {
-          provider: "claudeAgent",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-opus-4-6",
         },
         attachments: [],
       });
 
       assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6"]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("updates model on sendTurn for the adapter's bound custom instance id", () => {
+    const customInstanceId = ProviderInstanceId.make("claude_openrouter");
+    const harness = makeHarness({ instanceId: customInstanceId });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        modelSelection: {
+          instanceId: customInstanceId,
+          model: "openai/gpt-5.5",
+        },
+        attachments: [],
+      });
+
+      assert.deepEqual(harness.query.setModelCalls, ["openai/gpt-5.5"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -2400,13 +3002,13 @@ describe("ClaudeAdapterLive", () => {
       return Effect.gen(function* () {
         const adapter = yield* ClaudeAdapter;
         const modelSelection = {
-          provider: "claudeAgent" as const,
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-opus-4-6",
         };
 
         const session = yield* adapter.startSession({
           threadId: THREAD_ID,
-          provider: "claudeAgent",
+          provider: ProviderDriverKind.make("claudeAgent"),
           modelSelection,
           runtimeMode: "full-access",
         });
@@ -2439,27 +3041,25 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
       yield* adapter.sendTurn({
         threadId: session.threadId,
         input: "hello",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-opus-4-6",
-          options: {
-            contextWindow: "1m",
-          },
-        },
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+          [{ id: "contextWindow", value: "1m" }],
+        ),
         attachments: [],
       });
       yield* adapter.sendTurn({
         threadId: session.threadId,
         input: "hello again",
         modelSelection: {
-          provider: "claudeAgent",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-opus-4-6",
         },
         attachments: [],
@@ -2479,7 +3079,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
       yield* adapter.sendTurn({
@@ -2496,57 +3096,63 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("restores base permission mode on sendTurn when interactionMode is default", () => {
-    const harness = makeHarness();
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
+  it.effect.each<{ runtimeMode: RuntimeMode; expectedBase: PermissionMode }>([
+    { runtimeMode: "full-access", expectedBase: "bypassPermissions" },
+    { runtimeMode: "approval-required", expectedBase: "default" },
+    { runtimeMode: "auto-accept-edits", expectedBase: "acceptEdits" },
+  ])(
+    "restores $expectedBase permission mode after plan turn ($runtimeMode)",
+    ({ runtimeMode, expectedBase }) => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
 
-      const session = yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: "claudeAgent",
-        runtimeMode: "full-access",
-      });
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode,
+        });
 
-      // First turn in plan mode
-      yield* adapter.sendTurn({
-        threadId: session.threadId,
-        input: "plan this",
-        interactionMode: "plan",
-        attachments: [],
-      });
+        // First turn in plan mode
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "plan this",
+          interactionMode: "plan",
+          attachments: [],
+        });
 
-      // Complete the turn so we can send another
-      const turnCompletedFiber = yield* Stream.filter(
-        adapter.streamEvents,
-        (event) => event.type === "turn.completed",
-      ).pipe(Stream.runHead, Effect.forkChild);
+        // Complete the turn so we can send another
+        const turnCompletedFiber = yield* Stream.filter(
+          adapter.streamEvents,
+          (event) => event.type === "turn.completed",
+        ).pipe(Stream.runHead, Effect.forkChild);
 
-      harness.query.emit({
-        type: "result",
-        subtype: "success",
-        is_error: false,
-        errors: [],
-        session_id: "sdk-session-plan-restore",
-        uuid: "result-plan",
-      } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: `sdk-session-${runtimeMode}`,
+          uuid: `result-${runtimeMode}`,
+        } as unknown as SDKMessage);
 
-      yield* Fiber.join(turnCompletedFiber);
+        yield* Fiber.join(turnCompletedFiber);
 
-      // Second turn back to default
-      yield* adapter.sendTurn({
-        threadId: session.threadId,
-        input: "now do it",
-        interactionMode: "default",
-        attachments: [],
-      });
+        // Second turn back to default
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "now do it",
+          interactionMode: "default",
+          attachments: [],
+        });
 
-      // First call sets "plan", second call restores "bypassPermissions" (the base for full-access)
-      assert.deepEqual(harness.query.setPermissionModeCalls, ["plan", "bypassPermissions"]);
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
-    );
-  });
+        assert.deepEqual(harness.query.setPermissionModeCalls, ["plan", expectedBase]);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 
   it.effect("does not call setPermissionMode when interactionMode is absent", () => {
     const harness = makeHarness();
@@ -2555,7 +3161,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
       yield* adapter.sendTurn({
@@ -2578,7 +3184,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -2622,7 +3228,7 @@ describe("ClaudeAdapterLive", () => {
       }
       assert.equal(proposedEvent.value.payload.planMarkdown, "# Ship it\n\n- one\n- two");
       assert.deepEqual(proposedEvent.value.providerRefs, {
-        providerItemId: ProviderItemId.makeUnsafe("tool-exit-1"),
+        providerItemId: ProviderItemId.make("tool-exit-1"),
       });
 
       const permissionResult = yield* Effect.promise(() => permissionPromise);
@@ -2644,7 +3250,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -2700,7 +3306,7 @@ describe("ClaudeAdapterLive", () => {
       }
       assert.equal(proposedEvent.value.payload.planMarkdown, "# Final plan\n\n- capture it");
       assert.deepEqual(proposedEvent.value.providerRefs, {
-        providerItemId: ProviderItemId.makeUnsafe("tool-exit-2"),
+        providerItemId: ProviderItemId.make("tool-exit-2"),
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -2716,7 +3322,7 @@ describe("ClaudeAdapterLive", () => {
       // Start session in approval-required mode so canUseTool fires.
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "approval-required",
       });
 
@@ -2790,16 +3396,17 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(typeof requestId, "string");
       assert.equal(requestedEvent.value.payload.questions.length, 1);
       assert.equal(requestedEvent.value.payload.questions[0]?.question, "Which framework?");
+      // Regression for #2388: `id` must equal the full question text so the
+      // UI's draft-answer key matches what the SDK looks up downstream.
+      assert.equal(requestedEvent.value.payload.questions[0]?.id, "Which framework?");
       assert.deepEqual(requestedEvent.value.providerRefs, {
-        providerItemId: ProviderItemId.makeUnsafe("tool-ask-1"),
+        providerItemId: ProviderItemId.make("tool-ask-1"),
       });
 
       // Respond with the user's answers.
-      yield* adapter.respondToUserInput(
-        session.threadId,
-        ApprovalRequestId.makeUnsafe(requestId!),
-        { "Which framework?": "React" },
-      );
+      yield* adapter.respondToUserInput(session.threadId, ApprovalRequestId.make(requestId!), {
+        "Which framework?": "React",
+      });
 
       // The adapter should emit a user-input.resolved event.
       const resolvedEvent = yield* Stream.runHead(adapter.streamEvents);
@@ -2815,7 +3422,7 @@ describe("ClaudeAdapterLive", () => {
         "Which framework?": "React",
       });
       assert.deepEqual(resolvedEvent.value.providerRefs, {
-        providerItemId: ProviderItemId.makeUnsafe("tool-ask-1"),
+        providerItemId: ProviderItemId.make("tool-ask-1"),
       });
 
       // The canUseTool promise should resolve with the answers in SDK format.
@@ -2826,6 +3433,34 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(updatedInput.answers, { "Which framework?": "React" });
       // Original questions should be passed through.
       assert.deepEqual(updatedInput.questions, askInput.questions);
+
+      // Compatibility check for #2388: the answers shape we hand to the SDK
+      // must produce a non-empty rendered tool_result on BOTH SDK iteration
+      // patterns we have seen, so we don't regress the issue and we don't
+      // break users still on the older Claude CLI.
+      const sdkAnswers = updatedInput.answers as Record<string, unknown>;
+      const sdkQuestions = updatedInput.questions as ReadonlyArray<{
+        readonly question: string;
+      }>;
+
+      // Claude CLI 2.1.119 — key-agnostic Object.entries iteration. Any key
+      // works here, but it must at least round-trip into a non-empty string.
+      const v119Rendered = Object.entries(sdkAnswers)
+        .map(([key, value]) => `"${key}"="${String(value)}"`)
+        .join(", ");
+      assert.equal(v119Rendered, '"Which framework?"="React"');
+
+      // Claude CLI 2.1.121 — lookup by full question text. This is the path
+      // that regressed in #2388 when the answers were keyed by `header`.
+      const v121Rendered = sdkQuestions
+        .map(({ question }) => {
+          const answer = sdkAnswers[question];
+          return answer === undefined ? null : `"${question}"="${String(answer)}"`;
+        })
+        .filter((entry): entry is string => entry !== null)
+        .join(", ");
+      assert.notEqual(v121Rendered, "", "Expected non-empty SDK 2.1.121 tool_result (#2388)");
+      assert.equal(v121Rendered, '"Which framework?"="React"');
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -2841,7 +3476,7 @@ describe("ClaudeAdapterLive", () => {
       // AskUserQuestion should still go through the user-input flow.
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
 
@@ -2882,11 +3517,9 @@ describe("ClaudeAdapterLive", () => {
       }
       const requestId = requestedEvent.value.requestId;
 
-      yield* adapter.respondToUserInput(
-        session.threadId,
-        ApprovalRequestId.makeUnsafe(requestId!),
-        { "Deploy to which env?": "Staging" },
-      );
+      yield* adapter.respondToUserInput(session.threadId, ApprovalRequestId.make(requestId!), {
+        "Deploy to which env?": "Staging",
+      });
 
       // Drain the resolved event.
       yield* Stream.runHead(adapter.streamEvents);
@@ -2909,7 +3542,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "approval-required",
       });
 
@@ -2996,7 +3629,7 @@ describe("ClaudeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
       const turn = yield* adapter.sendTurn({

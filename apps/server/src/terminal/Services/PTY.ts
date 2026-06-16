@@ -6,7 +6,9 @@
  *
  * @module PtyAdapter
  */
-import { Effect, Schema, ServiceMap } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as Context from "effect/Context";
 
 /**
  * PtyError - Error type for PTY adapter operations.
@@ -14,7 +16,7 @@ import { Effect, Schema, ServiceMap } from "effect";
 export class PtySpawnError extends Schema.TaggedErrorClass<PtySpawnError>()("PtySpawnError", {
   adapter: Schema.String,
   message: Schema.String,
-  cause: Schema.optional(Schema.Defect),
+  cause: Schema.optional(Schema.Defect()),
 }) {}
 
 export interface PtyExitEvent {
@@ -53,6 +55,6 @@ export interface PtyAdapterShape {
 /**
  * PtyAdapter - Service tag for PTY process integration.
  */
-export class PtyAdapter extends ServiceMap.Service<PtyAdapter, PtyAdapterShape>()(
+export class PtyAdapter extends Context.Service<PtyAdapter, PtyAdapterShape>()(
   "t3/terminal/Services/PTY/PtyAdapter",
 ) {}

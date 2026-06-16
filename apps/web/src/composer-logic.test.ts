@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { ProviderDriverKind } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   clampCollapsedComposerCursor,
@@ -37,16 +38,23 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it("detects slash model query after /model", () => {
-    const text = "/model spark";
+  it("keeps /model as a slash command item", () => {
+    const text = "/model";
     const trigger = detectComposerTrigger(text, text.length);
 
     expect(trigger).toEqual({
-      kind: "slash-model",
-      query: "spark",
+      kind: "slash-command",
+      query: "model",
       rangeStart: 0,
       rangeEnd: text.length,
     });
+  });
+
+  it("does not keep a subcommand trigger active after /model arguments", () => {
+    const text = "/model spark";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toBeNull();
   });
 
   it("detects non-model slash commands while typing", () => {
@@ -57,6 +65,30 @@ describe("detectComposerTrigger", () => {
       kind: "slash-command",
       query: "pl",
       rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps slash command detection active for provider commands", () => {
+    const text = "/rev";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects $skill trigger at cursor", () => {
+    const text = "Use $gh-fi";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "skill",
+      query: "gh-fi",
+      rangeStart: "Use ".length,
       rangeEnd: text.length,
     });
   });
@@ -127,12 +159,42 @@ describe("expandCollapsedComposerCursor", () => {
     );
   });
 
+  it("maps collapsed quoted mention cursor to expanded text cursor", () => {
+    const text = 'what is in @"My File.md" please';
+    const collapsedCursorAfterMention = "what is in ".length + 2;
+    const expandedCursorAfterMention = 'what is in @"My File.md" '.length;
+
+    expect(expandCollapsedComposerCursor(text, collapsedCursorAfterMention)).toBe(
+      expandedCursorAfterMention,
+    );
+  });
+
+  it("maps collapsed markdown file links to their expanded source offsets", () => {
+    const text = "what's in [AGENTS.md](AGENTS.md) please";
+    const collapsedCursorAfterMention = "what's in ".length + 2;
+    const expandedCursorAfterMention = "what's in [AGENTS.md](AGENTS.md) ".length;
+
+    expect(expandCollapsedComposerCursor(text, collapsedCursorAfterMention)).toBe(
+      expandedCursorAfterMention,
+    );
+  });
+
   it("allows path trigger detection to close after selecting a mention", () => {
     const text = "what's in my @AGENTS.md ";
     const collapsedCursorAfterMention = "what's in my ".length + 2;
     const expandedCursor = expandCollapsedComposerCursor(text, collapsedCursorAfterMention);
 
     expect(detectComposerTrigger(text, expandedCursor)).toBeNull();
+  });
+
+  it("maps collapsed skill cursor to expanded text cursor", () => {
+    const text = "run $review-follow-up then";
+    const collapsedCursorAfterSkill = "run ".length + 2;
+    const expandedCursorAfterSkill = "run $review-follow-up ".length;
+
+    expect(expandCollapsedComposerCursor(text, collapsedCursorAfterSkill)).toBe(
+      expandedCursorAfterSkill,
+    );
   });
 });
 
@@ -151,6 +213,26 @@ describe("collapseExpandedComposerCursor", () => {
     );
   });
 
+  it("maps expanded quoted mention cursor back to collapsed cursor", () => {
+    const text = 'what is in @"My File.md" please';
+    const collapsedCursorAfterMention = "what is in ".length + 2;
+    const expandedCursorAfterMention = 'what is in @"My File.md" '.length;
+
+    expect(collapseExpandedComposerCursor(text, expandedCursorAfterMention)).toBe(
+      collapsedCursorAfterMention,
+    );
+  });
+
+  it("maps expanded markdown file link cursors back to collapsed offsets", () => {
+    const text = "what's in [AGENTS.md](AGENTS.md) please";
+    const collapsedCursorAfterMention = "what's in ".length + 2;
+    const expandedCursorAfterMention = "what's in [AGENTS.md](AGENTS.md) ".length;
+
+    expect(collapseExpandedComposerCursor(text, expandedCursorAfterMention)).toBe(
+      collapsedCursorAfterMention,
+    );
+  });
+
   it("keeps replacement cursors aligned when another mention already exists earlier", () => {
     const text = "open @AGENTS.md then @src/index.ts ";
     const expandedCursor = text.length;
@@ -158,6 +240,16 @@ describe("collapseExpandedComposerCursor", () => {
 
     expect(collapsedCursor).toBe("open ".length + 1 + " then ".length + 2);
     expect(expandCollapsedComposerCursor(text, collapsedCursor)).toBe(expandedCursor);
+  });
+
+  it("maps expanded skill cursor back to collapsed cursor", () => {
+    const text = "run $review-follow-up then";
+    const collapsedCursorAfterSkill = "run ".length + 2;
+    const expandedCursorAfterSkill = "run $review-follow-up ".length;
+
+    expect(collapseExpandedComposerCursor(text, expandedCursorAfterSkill)).toBe(
+      collapsedCursorAfterSkill,
+    );
   });
 });
 
@@ -234,6 +326,15 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
   });
+
+  it("treats skill pills as inline tokens for adjacency checks", () => {
+    const text = "run $review-follow-up next";
+    const tokenStart = "run ".length;
+    const tokenEnd = tokenStart + 1;
+
+    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
+  });
 });
 
 describe("parseStandaloneComposerSlashCommand", () => {
@@ -251,35 +352,32 @@ describe("parseStandaloneComposerSlashCommand", () => {
 });
 
 describe("parseStandaloneComposerReviewCommand", () => {
-  it("parses a codex review command", () => {
-    expect(parseStandaloneComposerReviewCommand(" /review --codex review this plan ")).toEqual({
-      reviewerProvider: "codex",
-      extraContext: "review this plan",
-    });
-  });
-
-  it("parses a claude review command alias", () => {
-    expect(parseStandaloneComposerReviewCommand("/review --claude check sequencing")).toEqual({
-      reviewerProvider: "claudeAgent",
-      extraContext: "check sequencing",
-    });
-  });
-
-  it("parses a copilot review command", () => {
-    expect(parseStandaloneComposerReviewCommand("/review --copilot validate assumptions")).toEqual({
-      reviewerProvider: "copilot",
-      extraContext: "validate assumptions",
-    });
-  });
-
-  it("allows review commands without extra context", () => {
+  it("maps --codex to the codex driver kind", () => {
     expect(parseStandaloneComposerReviewCommand("/review --codex")).toEqual({
-      reviewerProvider: "codex",
+      reviewerProvider: ProviderDriverKind.make("codex"),
       extraContext: "",
     });
   });
 
-  it("rejects malformed review commands", () => {
+  it("maps --claude to the claudeAgent driver kind", () => {
+    expect(parseStandaloneComposerReviewCommand("/review --claude")).toEqual({
+      reviewerProvider: ProviderDriverKind.make("claudeAgent"),
+      extraContext: "",
+    });
+  });
+
+  it("captures trailing extra context", () => {
+    expect(
+      parseStandaloneComposerReviewCommand("/review --codex focus on rollback safety"),
+    ).toEqual({
+      reviewerProvider: ProviderDriverKind.make("codex"),
+      extraContext: "focus on rollback safety",
+    });
+  });
+
+  it("returns null without a recognized provider flag", () => {
     expect(parseStandaloneComposerReviewCommand("/review")).toBeNull();
+    expect(parseStandaloneComposerReviewCommand("/review --copilot")).toBeNull();
+    expect(parseStandaloneComposerReviewCommand("just review this")).toBeNull();
   });
 });

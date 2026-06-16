@@ -1,9 +1,8 @@
 import { CommandId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { String, Predicate } from "effect";
 import { type CxOptions, cx } from "class-variance-authority";
+import * as Encoding from "effect/Encoding";
 import { twMerge } from "tailwind-merge";
-import * as Random from "effect/Random";
-import * as Effect from "effect/Effect";
+import { DraftId } from "../composerDraftStore";
 
 export function cn(...inputs: CxOptions) {
   return twMerge(cx(inputs));
@@ -21,55 +20,24 @@ export function isLinuxPlatform(platform: string): boolean {
   return /linux/i.test(platform);
 }
 
-export function randomUUID(): string {
-  if (typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return Effect.runSync(Random.nextUUIDv4);
+export function randomHex(byteLength: number): string {
+  return Encoding.encodeHex(globalThis.crypto.getRandomValues(new Uint8Array(byteLength)));
 }
 
-export const newCommandId = (): CommandId => CommandId.makeUnsafe(randomUUID());
+export function randomUUID(): string {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Encoding.encodeHex(bytes);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
-export const newProjectId = (): ProjectId => ProjectId.makeUnsafe(randomUUID());
+export const newCommandId = (): CommandId => CommandId.make(randomUUID());
 
-export const newThreadId = (): ThreadId => ThreadId.makeUnsafe(randomUUID());
+export const newProjectId = (): ProjectId => ProjectId.make(randomUUID());
 
-export const newMessageId = (): MessageId => MessageId.makeUnsafe(randomUUID());
+export const newThreadId = (): ThreadId => ThreadId.make(randomUUID());
 
-const isNonEmptyString = Predicate.compose(Predicate.isString, String.isNonEmpty);
-const firstNonEmptyString = (...values: unknown[]): string => {
-  for (const value of values) {
-    if (isNonEmptyString(value)) {
-      return value;
-    }
-  }
-  throw new Error("No non-empty string provided");
-};
+export const newDraftId = (): DraftId => DraftId.make(randomUUID());
 
-export const resolveServerUrl = (options?: {
-  url?: string | undefined;
-  protocol?: "http" | "https" | "ws" | "wss" | undefined;
-  pathname?: string | undefined;
-  searchParams?: Record<string, string> | undefined;
-}): string => {
-  const rawUrl = firstNonEmptyString(
-    options?.url,
-    window.desktopBridge?.getWsUrl(),
-    import.meta.env.VITE_WS_URL,
-    window.location.origin,
-  );
-
-  const parsedUrl = new URL(rawUrl);
-  if (options?.protocol) {
-    parsedUrl.protocol = options.protocol;
-  }
-  if (options?.pathname) {
-    parsedUrl.pathname = options.pathname;
-  } else {
-    parsedUrl.pathname = "/";
-  }
-  if (options?.searchParams) {
-    parsedUrl.search = new URLSearchParams(options.searchParams).toString();
-  }
-  return parsedUrl.toString();
-};
+export const newMessageId = (): MessageId => MessageId.make(randomUUID());

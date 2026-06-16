@@ -1,9 +1,13 @@
-import * as OS from "node:os";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import * as NodeOS from "node:os";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import {
   WorkspacePaths,
   WorkspacePathOutsideRootError,
+  WorkspaceRootCreateFailedError,
   WorkspaceRootNotDirectoryError,
   WorkspaceRootNotExistsError,
   type WorkspacePathsShape,
@@ -15,10 +19,10 @@ function toPosixRelativePath(input: string): string {
 
 function expandHomePath(input: string, path: Path.Path): string {
   if (input === "~") {
-    return OS.homedir();
+    return NodeOS.homedir();
   }
   if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return path.join(OS.homedir(), input.slice(2));
+    return path.join(NodeOS.homedir(), input.slice(2));
   }
   return input;
 }
@@ -29,11 +33,25 @@ export const makeWorkspacePaths = Effect.gen(function* () {
 
   const normalizeWorkspaceRoot: WorkspacePathsShape["normalizeWorkspaceRoot"] = Effect.fn(
     "WorkspacePaths.normalizeWorkspaceRoot",
-  )(function* (workspaceRoot) {
+  )(function* (workspaceRoot, options) {
     const normalizedWorkspaceRoot = path.resolve(expandHomePath(workspaceRoot.trim(), path));
-    const workspaceStat = yield* fileSystem
+    let workspaceStat = yield* fileSystem
       .stat(normalizedWorkspaceRoot)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
+      .pipe(Effect.orElseSucceed(() => null));
+    if (!workspaceStat && options?.createIfMissing) {
+      yield* fileSystem.makeDirectory(normalizedWorkspaceRoot, { recursive: true }).pipe(
+        Effect.mapError(
+          () =>
+            new WorkspaceRootCreateFailedError({
+              workspaceRoot,
+              normalizedWorkspaceRoot,
+            }),
+        ),
+      );
+      workspaceStat = yield* fileSystem
+        .stat(normalizedWorkspaceRoot)
+        .pipe(Effect.orElseSucceed(() => null));
+    }
     if (!workspaceStat) {
       return yield* new WorkspaceRootNotExistsError({
         workspaceRoot,

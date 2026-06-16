@@ -2,8 +2,10 @@ import {
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
+  MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
   type ResolvedKeybindingsConfig,
   THREAD_JUMP_KEYBINDING_COMMANDS,
+  type ModelPickerJumpKeybindingCommand,
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "./lib/utils";
@@ -18,9 +20,18 @@ export interface ShortcutEventLike {
   altKey: boolean;
 }
 
+export interface ShortcutModifierStateLike {
+  metaKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+}
+
 export interface ShortcutMatchContext {
   terminalFocus: boolean;
   terminalOpen: boolean;
+  previewFocus: boolean;
+  previewOpen: boolean;
   [key: string]: boolean;
 }
 
@@ -37,6 +48,7 @@ const TERMINAL_WORD_BACKWARD = "\u001bb";
 const TERMINAL_WORD_FORWARD = "\u001bf";
 const TERMINAL_LINE_START = "\u0001";
 const TERMINAL_LINE_END = "\u0005";
+const TERMINAL_DELETE_TO_LINE_START = "\u0015";
 const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   BracketLeft: ["["],
   BracketRight: ["]"],
@@ -60,6 +72,10 @@ function normalizeEventKey(key: string): string {
 
 function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   const keys = new Set([normalizeEventKey(event.key)]);
+  const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1];
+  if (letterCode) {
+    keys.add(letterCode.toLowerCase());
+  }
   const aliases = event.code ? EVENT_CODE_KEY_ALIASES[event.code] : undefined;
   if (!aliases) return keys;
 
@@ -70,7 +86,7 @@ function resolveEventKeys(event: ShortcutEventLike): Set<string> {
 }
 
 function matchesShortcutModifiers(
-  event: ShortcutEventLike,
+  event: ShortcutModifierStateLike,
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
 ): boolean {
@@ -102,6 +118,8 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
   return {
     terminalFocus: false,
     terminalOpen: false,
+    previewFocus: false,
+    previewOpen: false,
     ...options?.context,
   };
 }
@@ -269,12 +287,59 @@ export function shouldShowThreadJumpHints(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
+  return shouldShowThreadJumpHintsForModifiers(event, keybindings, options);
+}
+
+export function shouldShowThreadJumpHintsForModifiers(
+  modifiers: ShortcutModifierStateLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
   const platform = resolvePlatform(options);
 
   for (const command of THREAD_JUMP_KEYBINDING_COMMANDS) {
     const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
     if (!shortcut) continue;
-    if (matchesShortcutModifiers(event, shortcut, platform)) {
+    if (matchesShortcutModifiers(modifiers, shortcut, platform)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function modelPickerJumpCommandForIndex(
+  index: number,
+): ModelPickerJumpKeybindingCommand | null {
+  return MODEL_PICKER_JUMP_KEYBINDING_COMMANDS[index] ?? null;
+}
+
+export function modelPickerJumpIndexFromCommand(command: string): number | null {
+  const index = MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.indexOf(
+    command as ModelPickerJumpKeybindingCommand,
+  );
+  return index === -1 ? null : index;
+}
+
+export function shouldShowModelPickerJumpHints(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return shouldShowModelPickerJumpHintsForModifiers(event, keybindings, options);
+}
+
+export function shouldShowModelPickerJumpHintsForModifiers(
+  modifiers: ShortcutModifierStateLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  const platform = resolvePlatform(options);
+
+  for (const command of MODEL_PICKER_JUMP_KEYBINDING_COMMANDS) {
+    const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
+    if (!shortcut) continue;
+    if (matchesShortcutModifiers(modifiers, shortcut, platform)) {
       return true;
     }
   }
@@ -296,6 +361,14 @@ export function isTerminalSplitShortcut(
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "terminal.split", options);
+}
+
+export function isTerminalSplitVerticalShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "terminal.splitVertical", options);
 }
 
 export function isTerminalNewShortcut(
@@ -320,6 +393,30 @@ export function isDiffToggleShortcut(
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
+}
+
+export function isPreviewToggleShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "preview.toggle", options);
+}
+
+export function isPreviewRefreshShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "preview.refresh", options);
+}
+
+export function isPreviewFocusUrlShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "preview.focusUrl", options);
 }
 
 export function isChatNewShortcut(
@@ -368,6 +465,28 @@ export function isTerminalClearShortcut(
     !event.altKey &&
     !event.shiftKey
   );
+}
+
+export function terminalDeleteShortcutData(
+  event: ShortcutEventLike,
+  platform = navigator.platform,
+): string | null {
+  if (event.type !== undefined && event.type !== "keydown") {
+    return null;
+  }
+
+  if (!isMacPlatform(platform)) {
+    return null;
+  }
+
+  const key = normalizeEventKey(event.key);
+  if (key !== "backspace") {
+    return null;
+  }
+
+  return event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
+    ? TERMINAL_DELETE_TO_LINE_START
+    : null;
 }
 
 export function terminalNavigationShortcutData(

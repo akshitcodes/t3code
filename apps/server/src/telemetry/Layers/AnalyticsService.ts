@@ -7,13 +7,19 @@
  * @module AnalyticsServiceLive
  */
 
-import { Config, DateTime, Effect, Layer, Ref } from "effect";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Config from "effect/Config";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../../config.ts";
 import { AnalyticsService, type AnalyticsServiceShape } from "../Services/AnalyticsService.ts";
 import { getTelemetryIdentifier } from "../Identify.ts";
-import { version } from "../../../package.json" with { type: "json" };
+import packageJson from "../../../package.json" with { type: "json" };
 
 interface BufferedAnalyticsEvent {
   readonly event: string;
@@ -33,15 +39,18 @@ const TelemetryEnvConfig = Config.all({
   maxBufferedEvents: Config.number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
     Config.withDefault(1_000),
   ),
+  wslDistroName: Config.string("WSL_DISTRO_NAME").pipe(Config.option),
 });
 
 const makeAnalyticsService = Effect.gen(function* () {
-  const telemetryConfig = yield* TelemetryEnvConfig.asEffect();
+  const telemetryConfig = yield* TelemetryEnvConfig;
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig;
   const identifier = yield* getTelemetryIdentifier;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
+  const hostPlatform = yield* HostProcessPlatform;
+  const hostArchitecture = yield* HostProcessArchitecture;
 
   const enqueueBufferedEvent = (event: string, properties?: Readonly<Record<string, unknown>>) =>
     Effect.flatMap(DateTime.now, (now) =>
@@ -83,10 +92,10 @@ const makeAnalyticsService = Effect.gen(function* () {
         properties: {
           ...event.properties,
           $process_person_profile: false,
-          platform: process.platform,
-          wsl: process.env.WSL_DISTRO_NAME,
-          arch: process.arch,
-          t3CodeVersion: version,
+          platform: hostPlatform,
+          wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
+          arch: hostArchitecture,
+          t3CodeVersion: packageJson.version,
           clientType,
         },
         timestamp: event.capturedAt,

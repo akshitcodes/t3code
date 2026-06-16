@@ -5,18 +5,15 @@
  * `OrchestrationEventStore` persistence. It does not own provider process
  * management or transport concerns (e.g. websocket request parsing).
  *
- * Uses Effect `ServiceMap.Service` for dependency injection. Command dispatch,
+ * Uses Effect `Context.Service` for dependency injection. Command dispatch,
  * replay, and unknown-input decoding all return typed domain errors.
  *
  * @module OrchestrationEngineService
  */
-import type {
-  OrchestrationCommand,
-  OrchestrationEvent,
-  OrchestrationReadModel,
-} from "@t3tools/contracts";
-import { ServiceMap } from "effect";
-import type { Effect, Stream } from "effect";
+import type { OrchestrationCommand, OrchestrationEvent } from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
+import type * as Stream from "effect/Stream";
 
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
@@ -25,13 +22,6 @@ import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
  * OrchestrationEngineShape - Service API for orchestration command and event flow.
  */
 export interface OrchestrationEngineShape {
-  /**
-   * Read the current in-memory orchestration read model.
-   *
-   * @returns Effect containing the latest read model.
-   */
-  readonly getReadModel: () => Effect.Effect<OrchestrationReadModel, never, never>;
-
   /**
    * Replay persisted orchestration events from an exclusive sequence cursor.
    *
@@ -70,11 +60,11 @@ export interface OrchestrationEngineShape {
  * ```ts
  * const program = Effect.gen(function* () {
  *   const engine = yield* OrchestrationEngineService
- *   return yield* engine.getReadModel()
+ *   return yield* engine.dispatch(command)
  * })
  * ```
  */
-export class OrchestrationEngineService extends ServiceMap.Service<
+export class OrchestrationEngineService extends Context.Service<
   OrchestrationEngineService,
   OrchestrationEngineShape
 >()("t3/orchestration/Services/OrchestrationEngine/OrchestrationEngineService") {}

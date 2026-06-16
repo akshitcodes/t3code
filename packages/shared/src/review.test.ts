@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { EventId } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+import { EventId, ProviderDriverKind } from "@t3tools/contracts";
 
 import {
   buildStructuredPlanReviewPayload,
@@ -15,11 +15,13 @@ import {
   PLAN_REVIEW_FINISHED_ACTIVITY_KIND,
   PLAN_REVIEW_LINK_ACTIVITY_KIND,
   PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
-} from "./review";
+} from "./review.ts";
+
+const CODEX = ProviderDriverKind.make("codex");
 
 describe("review helpers", () => {
   it("builds a reviewer thread title", () => {
-    expect(buildPlanReviewThreadTitle("Ship auth flow", "codex")).toBe(
+    expect(buildPlanReviewThreadTitle("Ship auth flow", CODEX)).toBe(
       "Review: Ship auth flow (Codex)",
     );
   });
@@ -99,7 +101,7 @@ The sequencing is mostly sound, but it is missing rollback planning.
 
   it("builds a source-thread feedback prompt from parsed review data", () => {
     const feedback = buildPlanReviewFeedbackMessage({
-      reviewerProvider: "codex",
+      reviewerProvider: CODEX,
       review: {
         decision: "update-plan",
         body: `DECISION: update-plan
@@ -119,7 +121,7 @@ Missing rollback plan.`,
       findLinkedPlanReviewThread(
         [
           {
-            id: EventId.makeUnsafe("evt-link"),
+            id: EventId.make("evt-link"),
             tone: "info",
             kind: PLAN_REVIEW_LINK_ACTIVITY_KIND,
             summary: "Linked review thread",
@@ -133,7 +135,7 @@ Missing rollback plan.`,
           },
         ],
         "source",
-        "codex",
+        CODEX,
       ),
     ).toEqual({
       role: "source",
@@ -146,7 +148,7 @@ Missing rollback plan.`,
     expect(
       findPendingPlanReviewRequest([
         {
-          id: EventId.makeUnsafe("evt-request"),
+          id: EventId.make("evt-request"),
           tone: "info",
           kind: PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
           summary: "Review requested",
@@ -163,7 +165,7 @@ Missing rollback plan.`,
           createdAt: "2026-04-06T10:00:00.000Z",
         },
         {
-          id: EventId.makeUnsafe("evt-complete"),
+          id: EventId.make("evt-complete"),
           tone: "info",
           kind: PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
           summary: "Review completed",
@@ -181,7 +183,7 @@ Missing rollback plan.`,
     expect(
       findLatestActivePlanReview([
         {
-          id: EventId.makeUnsafe("evt-request"),
+          id: EventId.make("evt-request"),
           tone: "info",
           kind: PLAN_REVIEW_REQUESTED_ACTIVITY_KIND,
           summary: "Review requested",
@@ -198,7 +200,7 @@ Missing rollback plan.`,
           createdAt: "2026-04-06T10:00:00.000Z",
         },
         {
-          id: EventId.makeUnsafe("evt-complete"),
+          id: EventId.make("evt-complete"),
           tone: "info",
           kind: PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
           summary: "Review completed",
@@ -234,7 +236,7 @@ Missing rollback plan.`,
     expect(
       findLatestActivePlanReview([
         {
-          id: EventId.makeUnsafe("evt-complete"),
+          id: EventId.make("evt-complete"),
           tone: "info",
           kind: PLAN_REVIEW_COMPLETED_ACTIVITY_KIND,
           summary: "Review completed",
@@ -252,7 +254,7 @@ Missing rollback plan.`,
           createdAt: "2026-04-06T10:01:00.000Z",
         },
         {
-          id: EventId.makeUnsafe("evt-finished"),
+          id: EventId.make("evt-finished"),
           tone: "info",
           kind: PLAN_REVIEW_FINISHED_ACTIVITY_KIND,
           summary: "Review finished",

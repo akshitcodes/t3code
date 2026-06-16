@@ -6,7 +6,9 @@
  *
  * @module AnalyticsService
  */
-import { Effect, Layer, ServiceMap } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Context from "effect/Context";
 
 export interface AnalyticsServiceShape {
   /**
@@ -23,7 +25,7 @@ export interface AnalyticsServiceShape {
   readonly flush: Effect.Effect<void, never>;
 }
 
-export class AnalyticsService extends ServiceMap.Service<AnalyticsService, AnalyticsServiceShape>()(
+export class AnalyticsService extends Context.Service<AnalyticsService, AnalyticsServiceShape>()(
   "t3/telemetry/Services/AnalyticsService",
 ) {
   static readonly layerTest = Layer.succeed(AnalyticsService, {
